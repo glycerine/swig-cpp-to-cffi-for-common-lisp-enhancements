@@ -1,0 +1,24 @@
+I'm forking the swig code to do some enhancements to the C++ to CFFI bindings for common lisp.
+
+The only file that differs from SWIG svn 12570 is Source/Modules/cffi.cxx.
+
+I've got a generation process that wraps alot of C++ code cleanly now. The defmethod names
+aren't the prettiest, but we've avoided all congruency issues, so everything compiles and
+loads cleanly on my large test code base from a big C++ project.
+
+The point of posting on github is to allow easy testing and further enhancements to the cffi.cxx.
+
+
+Notes:
+
+Starting point for this work is the following "svn info":
+
+URL: https://swig.svn.sourceforge.net/svnroot/swig/trunk
+Repository Root: https://swig.svn.sourceforge.net/svnroot/swig
+Repository UUID: 626c5289-ae23-0410-ae9c-e8d60b6d4f22
+Revision: 12570
+Node Kind: directory
+Schedule: normal
+Last Changed Author: wsfulton
+Last Changed Rev: 12570
+Last Changed Date: 2011-03-29 18:01:55 -0500 (Tue, 29 Mar 2011)
