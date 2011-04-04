@@ -354,14 +354,23 @@ void CFFI::emit_defmethod(Node *n) {
 	 args_call);
   #endif
 
-  String* sym_name2 = lispify_name(n, Getattr(n, "sym:name"), "'function");
+  // have to make a new string here, or else we'll mofiy "sym:name" permanantly during
+  // the Replaceall -- definitely not what we want!
+  String* sym_name2 = NewStringf("%s",Char(lispify_name(n, Getattr(n, "sym:name"), "'function")));
+  //Swig_print(sym_name2);
   Replaceall(sym_name2,NewStringf("__SWIG_"),NewStringf(""));
+  //Swig_print(sym_name2);
+  //Swig_print(n);
+  //Swig_print_node(n);
+
+  String* defcfun_call = lispify_name(n, Getattr(n, "sym:name"), "'function");
+  //Swig_print(defcfun_call);
 
   /* make it easy to figure out which methods are being called, and avoid conflicts between C++ over-ridden methods */
   Printf(f_clos, "(cl:defmethod method_%s (%s)\n  (%s%s))\n\n",
          sym_name2,
 	 args_placeholder,
-         lispify_name(n, Getattr(n, "sym:name"), "'function"), 
+	 defcfun_call,
 	 args_call);
   
 
