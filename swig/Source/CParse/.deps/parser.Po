@@ -1,0 +1,84 @@
+CParse/parser.o: CParse/parser.c ../Source/Swig/swig.h \
+ ../Source/Include/swigconfig.h /usr/include/stdio.h \
+ /usr/include/features.h /usr/include/bits/predefs.h \
+ /usr/include/sys/cdefs.h /usr/include/bits/wordsize.h \
+ /usr/include/gnu/stubs.h /usr/include/gnu/stubs-64.h \
+ /usr/lib/gcc/x86_64-linux-gnu/4.4.3/include/stddef.h \
+ /usr/include/bits/types.h /usr/include/bits/typesizes.h \
+ /usr/include/libio.h /usr/include/_G_config.h /usr/include/wchar.h \
+ /usr/lib/gcc/x86_64-linux-gnu/4.4.3/include/stdarg.h \
+ /usr/include/bits/stdio_lim.h /usr/include/bits/sys_errlist.h \
+ /usr/include/string.h /usr/include/stdlib.h /usr/include/assert.h \
+ ../Source/DOH/doh.h ../Source/Swig/swigfile.h ../Source/Swig/swigopt.h \
+ ../Source/Swig/swigscan.h ../Source/Swig/swigparm.h \
+ ../Source/Swig/swigtree.h ../Source/Swig/swigwrap.h CParse/cparse.h \
+ ../Source/Include/swigwarn.h ../Source/Preprocessor/preprocessor.h \
+ /usr/include/ctype.h /usr/include/endian.h /usr/include/bits/endian.h
+
+../Source/Swig/swig.h:
+
+../Source/Include/swigconfig.h:
+
+/usr/include/stdio.h:
+
+/usr/include/features.h:
+
+/usr/include/bits/predefs.h:
+
+/usr/include/sys/cdefs.h:
+
+/usr/include/bits/wordsize.h:
+
+/usr/include/gnu/stubs.h:
+
+/usr/include/gnu/stubs-64.h:
+
+/usr/lib/gcc/x86_64-linux-gnu/4.4.3/include/stddef.h:
+
+/usr/include/bits/types.h:
+
+/usr/include/bits/typesizes.h:
+
+/usr/include/libio.h:
+
+/usr/include/_G_config.h:
+
+/usr/include/wchar.h:
+
+/usr/lib/gcc/x86_64-linux-gnu/4.4.3/include/stdarg.h:
+
+/usr/include/bits/stdio_lim.h:
+
+/usr/include/bits/sys_errlist.h:
+
+/usr/include/string.h:
+
+/usr/include/stdlib.h:
+
+/usr/include/assert.h:
+
+../Source/DOH/doh.h:
+
+../Source/Swig/swigfile.h:
+
+../Source/Swig/swigopt.h:
+
+../Source/Swig/swigscan.h:
+
+../Source/Swig/swigparm.h:
+
+../Source/Swig/swigtree.h:
+
+../Source/Swig/swigwrap.h:
+
+CParse/cparse.h:
+
+../Source/Include/swigwarn.h:
+
+../Source/Preprocessor/preprocessor.h:
+
+/usr/include/ctype.h:
+
+/usr/include/endian.h:
+
+/usr/include/bits/endian.h:

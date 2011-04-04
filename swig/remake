@@ -1,0 +1,4 @@
+set -x
+#cp ~/dj/cffi.cxx Source/Modules/
+make
+cp -p swig bin/
