@@ -16,11 +16,14 @@ char cvsroot_cffi_cxx[] = "$Id: cffi.cxx 12524 2011-03-09 21:42:38Z wsfulton $";
 
 #include "swigmod.h"
 #include "cparse.h"
+#include <math.h>
 #include <ctype.h>
 
 #include <set>
 #include <vector>
 #include <algorithm>
+#include <map>
+#include <string>
 #include <assert.h>
 #include <unistd.h>
 
@@ -71,6 +74,7 @@ struct Arme {
   String* renamed_and_unscoped_method_name;
   String* renamed_class_name;
   String* class_dot_method;
+  String* renamed_method;
 };
 
 
@@ -88,12 +92,18 @@ typedef std::vector<Arme>::iterator ArityVectorIt;
 
 // static variables : used to cache state between methods 
 //                    in emit_overloaded_defgeneric_and_defun()
-AritySet     defgen_arityset;
-ArityVector  defgen_av;
-Arme         arme;
+
+struct arity_vecset {
+  AritySet     arityset;
+  ArityVector  av;
+};
+
+  Arme         arme;
 
 
-enum EnumFirstNextLast { FIRST_OVERLOAD, NEXT_OVERLOAD, LAST_OVERLOAD } ;
+typedef std::map< std::string, arity_vecset*>  overload2vs;
+typedef std::map< std::string, arity_vecset*>::iterator  o2vs_it;
+overload2vs o2vs;
 
 
 //#define CFFI_DEBUG
@@ -149,6 +159,7 @@ public:
   virtual int memberfunctionHandler(Node *n);
   virtual int membervariableHandler(Node *n);
   virtual int classHandler(Node *n);
+  virtual int staticmemberfunctionHandler(Node *n);
 
 private:
   void emit_defun(Node *n, String *name);
@@ -160,14 +171,13 @@ private:
   void emit_struct_union(Node *n, bool un);
   void emit_export(Node *n, String *name);
   void emit_inline(Node *n, String *name);
-  void emit_overloaded_defgeneric_and_defun(Node *n,
+  bool emit_overloaded_defgeneric_and_defun(Node *n,
 					    String* sym_name2,
 					    String* args_placeholder,
 					    String* defcfun_call,
 					    String* args_call,
 					    String* args_names,
-					    String* sym_name_preswig,
-					    EnumFirstNextLast fnl);
+					    String* sym_name_preswig);
 
   int     get_arity_of_decl(Node *n);
   String* get_swig_method_number_suffix(Node* n);
@@ -178,6 +188,7 @@ private:
 		       String*& args_names,
 		       String*& args_call
 		       );
+  int count_sym_overloaded_methods(Node* n);
 
   String *lispy_name(char *name);
   String *lispify_name(Node *n, String *ty, const char *flag, bool kw = false);
@@ -456,6 +467,12 @@ int CFFI::get_arity_of_decl(Node *n) {
     start = found+1;
   }
 
+  // static methods don't have a this pointer.
+  Node* storage = Getattr(n,"storage");
+  if (storage && 0==Strcmp(storage,"static")) {
+    return comma_count;
+  }
+
   return comma_count + 1;
 }
 
@@ -486,29 +503,28 @@ String* CFFI::get_swig_method_number_suffix(Node* n) {
 //    we are on the last. The save mode is further refined
 //    by either being the start of a new set (discard all
 //    old, buffered methods) or a continuation
-//enum EnumFirstNextLast { FIRST_OVERLOAD, NEXT_OVERLOAD, LAST_OVERLOAD } ;
 
-void CFFI::emit_overloaded_defgeneric_and_defun(Node *n,
+// returns true if we printed or cached for later printing, or is already handled; false otherwise if defmethod needs to print it.
+bool CFFI::emit_overloaded_defgeneric_and_defun(Node *n,
 						String* sym_name2,
 						String* args_placeholder,
 						String* defcfun_call,
 						String* args_call,
 						String* args_names,
-						String* sym_name_preswig,
-						EnumFirstNextLast fnl) {
+						String* sym_name_preswig) {
 
     // guarantee that we only emit the manual dispatching code
     // and method declarations once and only once.
-    if (Getattr(n,"cffi:defgeneric_and_defun_already_done")) {
+    if (Getattr(n,"cffi:emit_overloaded_defgeneric")) {
       DV(Printf(stdout,"^^^^^^^^^ : cffi:defgeneric_and_defun_already_done was already set for %s, aborting early.\n",sym_name2));
-      return; 
+      return true; 
     } else {
       // set it so we will know next time through
-      Setattr(n,"cffi:defgeneric_and_defun_already_done","1");
+      Setattr(n,"cffi:emit_overloaded_defgeneric","1");
     }
 
     String* overloaded = Getattr(n,"sym:overloaded");
-    assert(overloaded); // must be overloaded to call us.
+    if (!overloaded) return false;
 
   // debug:
     DV( {
@@ -530,33 +546,30 @@ void CFFI::emit_overloaded_defgeneric_and_defun(Node *n,
   //   methods with different types, but we have to manually dispatch the C++
   //   methods that overload on different numbers of arguments (arity).
 
+    arity_vecset* av = 0;
 
-    // static: AritySet defgen_arityset;
-    // static: ArityVector defgen_av;
-    // static: Arme arme
-    /*
-    struct Arme {
-      int     arity;
-      Node*   n;
-      String* swig_method_num;
-      String* wrapname;
-      
-      String* sym_name2;
-      String* args_placeholder;
-      String* defcfun_call;
-      String* args_call;
-      string* args_names;
-      String* sym_name_preswig;
-    };
+    // sym_name_preswig is FileName_compare
+    // sym_name_preswig is compare, for the static overload.
 
-     */
+    String* renamed = Char(Getattr(n,"memberfunctionHandler:sym:name")); // compare for regular non-static.
 
-    DV(printf("debug: in defgen with fnl = '%s'\n", (fnl==FIRST_OVERLOAD ? "FIRST_OVERLOAD" : ( (fnl==NEXT_OVERLOAD) ? "NEXT_OVERLOAD" : "LAST_OVERLOAD"))));
-
-    if (fnl == FIRST_OVERLOAD) {
-      defgen_av.clear();
-      defgen_arityset.clear();
+    if (renamed == 0) {
+      renamed = Char(Getattr(n,"sym:name"));
     }
+
+    o2vs_it vit = o2vs.find(Char(renamed));
+    DV(printf("dump of os2vs after looking for '%s'\n", Char(renamed)));
+    DV(for (o2vs_it jit = o2vs.begin(); jit != o2vs.end(); ++jit) { printf("%s\n", jit->first.c_str()); } );
+
+    if(vit == o2vs.end()) {
+      av = new arity_vecset;
+      o2vs[Char(renamed)] = av;      
+    } else {
+      av = vit->second;
+    }
+
+    AritySet&    defgen_arityset = av->arityset;
+    ArityVector& defgen_av       = av->av; 
 
     // save the node's details (which disappear) so we can emit a full method plus arity
     // dispatch function later.
@@ -570,24 +583,36 @@ void CFFI::emit_overloaded_defgeneric_and_defun(Node *n,
      arme.defcfun_call     = Copy(defcfun_call);
      arme.args_call        = Copy(args_call);
      arme.args_names       = Copy(args_names);
-     arme.sym_name_preswig = Copy(sym_name_preswig);
+
+     // the original sym_name_preswig wasn't consist across static 
+     // and non-static methods, so we re-create it consistently below
+     // once we have the two necessary components.
+     //      no good:   arme.sym_name_preswig = Copy(sym_name_preswig);
 
      arme.renamed_and_unscoped_method_name = Copy(Getattr(arme.method,"memberfunctionHandler:sym:name"));
      arme.renamed_class_name               = Copy(Getattr(Getattr(arme.method,"parentNode"),"classDeclaration:name"));
-     arme.class_dot_method = NewStringf("%s.%s",arme.renamed_class_name, arme.renamed_and_unscoped_method_name);
+     arme.renamed_method   = NewStringf("%s",renamed);
+     arme.class_dot_method = NewStringf("%s.%s",arme.renamed_class_name, renamed);
+
+     // good across static and non-static overloaded methods:
+     arme.sym_name_preswig = NewStringf("%s_%s",arme.renamed_class_name, arme.renamed_method);
+     sym_name_preswig = arme.sym_name_preswig; // we use it later, stay consistent.
 
      defgen_av.push_back(arme);
      defgen_arityset.insert(arme);
 
      DV(Printf(stdout,"arity seen was: %d  for  %s   :  %s  :  %s\n", arme.arity, Getattr(n,"sym:name"), Getattr(n,"decl"),Getattr(n,"sym:overname")));
 
-     if (fnl != LAST_OVERLOAD) return;
+     if (vit == o2vs.end()) return true; // it was new
 
+     // not new, have we got all of them?
+     if ((int)defgen_av.size() < count_sym_overloaded_methods(n)) return true; // no, come back later
 
-  // INVAR: fnl == LAST_OVERLOAD
-
-  assert(defgen_av.size() !=0);
-  std::sort(defgen_av.begin(), defgen_av.end(), LessThanArity());
+     // yes, we've seen them all
+     assert((int)defgen_av.size() == count_sym_overloaded_methods(n));
+     DV(printf("issuing all %d generic methods + manual dispatcher now\n", (int)defgen_av.size()));
+     assert(defgen_av.size() !=0);
+     std::sort(defgen_av.begin(), defgen_av.end(), LessThanArity());
 
   // INVAR: defgen_arityset and defgen_av are loaded and ready.
 
@@ -630,9 +655,9 @@ void CFFI::emit_overloaded_defgeneric_and_defun(Node *n,
 	     Swig_print(cur_args_call);
 	       });
 
-    Printf(f_clos,"\n(cl:defgeneric  %s_%d (%s)",sym_name_preswig, cur_arity, cur_args_names);
+    Printf(f_clos,"\n(cl:defgeneric  %%%s_%d (%s)",sym_name_preswig, cur_arity, cur_args_names);
 
-    DV(Printf(stdout,"\n(cl:defgeneric  %s_%d (%s)\n",sym_name_preswig, cur_arity, cur_args_names));
+    DV(Printf(stdout,"\n(cl:defgeneric  %%%s_%d (%s)\n",sym_name_preswig, cur_arity, cur_args_names));
 
     // reset kit to the begininig of our class
     kit = it;
@@ -677,7 +702,7 @@ void CFFI::emit_overloaded_defgeneric_and_defun(Node *n,
 	 arme.class_dot_method,
 	 arme.class_dot_method,
 	 arme.renamed_class_name,
-	 arme.renamed_and_unscoped_method_name
+	 arme.renamed_method
 	 );
   
   AritySetIt en = defgen_arityset.end();
@@ -685,7 +710,7 @@ void CFFI::emit_overloaded_defgeneric_and_defun(Node *n,
   for (AritySetIt it = defgen_arityset.begin(); it != en; ++it, ++i) {
     
     arme = *it; // local copy. easy to reference and debug/inspect
-    Printf(f_clos,"   (%d (apply #'%s_%d  args))\n", arme.arity + 1, arme.sym_name_preswig, arme.arity );
+    Printf(f_clos,"   (%d (apply #'%%%s_%d  args))\n", arme.arity + 1, arme.sym_name_preswig, arme.arity );
   }
   Printf(f_clos,"))\n\n"); 
   
@@ -706,6 +731,7 @@ void CFFI::emit_overloaded_defgeneric_and_defun(Node *n,
 		 args_names));
 
 
+       return true;
 } // end emit_overloaded_defgeneric_and_defun()
 
 
@@ -798,7 +824,56 @@ void CFFI::get_arg_details(Node* n, //in
 
 } // end CFFI::get_arg_details
 
+int CFFI::count_sym_overloaded_methods(Node* n) {
+    Node *overloaded = Getattr(n, "sym:overloaded");
+    if (0==overloaded) return 0;
+
+    Node* symnext = Getattr(n, "sym:nextSibling");
+    Node* symprev = Getattr(n, "sym:previousSibling");    
+
+    Node* symprev_last = symprev;
+    Node* symnext_last = symnext;
+
+    while (symnext) {
+      symnext_last = symnext;
+      symnext      = Getattr(symnext, "sym:nextSibling");
+    }
+    symnext = symnext_last;
+
+    while (symprev) {
+      symprev_last = symprev;
+      symprev      = Getattr(symprev, "sym:previousSibling");
+    }
+    symprev = symprev_last;
+
+    // count forward
+    int prev_fwd_count = 0;
+    if (symprev) {
+      while(symprev) {
+	prev_fwd_count++;
+	symprev = Getattr(symprev, "sym:nextSibling");
+      }
+    }
+
+    // count backward
+    int next_bwd_count = 0;
+    if (symnext) {
+      while(symnext) {
+	next_bwd_count++;
+	symnext = Getattr(symnext, "sym:previousSibling");
+      }
+    }
+
+    return std::max(prev_fwd_count,next_bwd_count);
+}
+
 void CFFI::emit_defmethod(Node *n) {
+
+  DV( {
+      printf("emit_defmethod called ================================================\n");
+      Swig_print(n,2);
+      printf("============================= end emit_defmethod dump ================\n");
+    });
 
   Node *overloaded = Getattr(n, "sym:overloaded");
 
@@ -820,6 +895,12 @@ void CFFI::emit_defmethod(Node *n) {
   String* sym_name2 = NewStringf("%s",Char(lispify_name(n, Getattr(n, "sym:name"), "'function")));
   String* sym_name_preswig = NewStringf("%s",sym_name2);
   //Swig_print(sym_name2);
+
+  DV( {
+  if (overloaded) {
+    int ovcount = count_sym_overloaded_methods(n);
+    printf("%s  has ovcount = %d\n",Char(sym_name_preswig),ovcount);
+  }});
 
   // locate and define the __SWIG_1 or __SWIG_2 or whatever number we find here.
   char* sym_name2_startat = Char(sym_name2);
@@ -858,37 +939,16 @@ void CFFI::emit_defmethod(Node *n) {
   DV( {printf("debug ======== n:\n");
       Swig_print(n); });
 
-  // overloaded : the fact that it exists alone is the
-  // most meaningful information: it always points to the first
-  // method that shares this name. This is then where we'll store
-  // information that we've already written out the Lisp
-  // defgeneric and defmethods for a given overloaded class, so
-  // that we only do that once.
-
+  // call for everybody; it's harmless if not needed.
   if (overloaded) {
-
-    EnumFirstNextLast fnl = FIRST_OVERLOAD;
-
-    if (Getattr(n, "sym:nextSibling")) {
-      if (Getattr(n, "sym:previousSibling")) {
-	fnl = NEXT_OVERLOAD;
-
-      } else {
-	fnl = FIRST_OVERLOAD;
-      }
-    } else {
-      fnl = LAST_OVERLOAD;
-    }
-
     emit_overloaded_defgeneric_and_defun(n,
 					 sym_name2,
 					 args_placeholder,
 					 defcfun_call,
 					 args_call,
 					 args_names,
-					 sym_name_preswig,
-					 fnl);
-    return;
+					 sym_name_preswig);
+      return;
   }
 
   // INVAR: n is not an overloaded C++ method.
@@ -908,6 +968,22 @@ void CFFI::emit_defmethod(Node *n) {
   Setattr(n, "cffi:memberfunction", "1"); // what is the point of this--do we need to do it in emit_overloaded_defgeneric_and_defun as well?
 
 } // end emit_defmethod
+
+
+/* ----------------------------------------------------------------------
+ * CFFI::staticmemberfunctionHandler()
+ * ---------------------------------------------------------------------- */
+
+int CFFI::staticmemberfunctionHandler(Node *n) {
+
+  DV(printf("CFFI::staticmemberfunctionHandler(Node *n) called\n"));
+
+  emit_defmethod(n);
+
+  Setattr(n, "cffi:staticmemberfunctionHandler", "1");
+  // Let SWIG generate a global forwarding function.
+  return Language::staticmemberfunctionHandler(n);
+}
 
 void CFFI::emit_initialize_instance(Node *n) {
   String *args_placeholder = NewStringf("");
