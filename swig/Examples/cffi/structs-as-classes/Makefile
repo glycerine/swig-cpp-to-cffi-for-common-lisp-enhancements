@@ -3,7 +3,7 @@ SWIG       = $(TOP)/../preinst-swig
 SRCS       = example.cxx
 TARGET     = example
 INTERFACE  = example.i
-SWIGOPT    = -c++ -cffi -structs-as-classes
+SWIGOPT    = -c++ -cffi
 
 # notes: here's what I usually have to do to build a .so library on linux
 #
