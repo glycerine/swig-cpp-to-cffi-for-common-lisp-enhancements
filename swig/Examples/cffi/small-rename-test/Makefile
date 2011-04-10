@@ -9,3 +9,6 @@ test:
 	echo "if the tests passed, there should be a message here:"
 	tail small_test.output_observed
 
+clean:
+	rm -f small.o small_wrap.o small.so small_wrap.cxx small.lisp small-clos.lisp small-clos.lx64fsl small.lx64fsl small_test.output_observed
+
