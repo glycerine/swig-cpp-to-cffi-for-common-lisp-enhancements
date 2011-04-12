@@ -348,27 +348,14 @@ void CFFI::main(int argc, char *argv[]) {
 void CFFI::emit_lispfile_preamble(Node* f) {
 
   Swig_banner_target_lang(f, ";;;");
-  //  Swig_banner(f_clos);
 
   String* extra_use_pkgs = NewStringf(":ccl");
 
   Printf(f,
-	 //	 "\n"
-	 //	 "(defpackage :swig\n"
-	 //	 "  (:use :common-lisp :cffi :ccl)\n"
-	 //	 "  (:export #:*swig-identifier-converter* #:*swig-module-name*\n"
-	 //	 "           #:*void* #:*swig-export-list*)\n"
-	 //	 "  (:shadowing-import-from :cffi :defcallback))\n"
-	 //	 "(in-package :swig)\n"
-	 //	 "\n"
-	 //	 "(eval-when (:compile-toplevel :load-toplevel :execute)\n"
-	 //	 "  (defparameter *swig-identifier-converter* 'identifier-convert-null)\n"
-	 //	 "  (defparameter *swig-module-name* :micro))\n"
 	 "\n"
 	 "(defpackage :%s\n"
 	 "  (:shadowing-import-from :cffi :defcallback)\n"
 	 "  (:use :common-lisp :cffi %s))\n"
-	 //	 "  (:use :common-lisp :swig :cffi :ccl))\n"
 	 "\n"
 	 "(in-package :%s)\n"
 	 "\n",
@@ -641,20 +628,6 @@ int CFFI::get_arity_of_decl(Node *n) {
   // use the swig supplied routine in Source/Modules/emit.cxx, emit_num_required(), since
   // it is likely more accurate that my approximation below.
 
-#if 0 // just my stuff now, since it doesn't crash on certain files.
-  int emit_npar = -1;
-  Node* wrap_name = Getattr(n,"wrap:name");
-  if(wrap_name) {
-    Node* wrap_parms = Getattr(n,"wrap:parms");
-    if (wrap_parms) {
-      emit_npar = emit_num_required(wrap_parms);
-    }
-  }
-
-  int emit_npar_direct = emit_num_required(n);
-  DV(printf("emit_npar_direct is %d\n",emit_npar_direct));
-#endif
-
   String* decl = Getattr(n,"decl");
   if (0==decl) return -1; // weigh_comma_count_vs_emit(-1,emit_npar);
 
@@ -796,8 +769,9 @@ arity_vecset* CFFI::retreive_av(Node* n,
 //    old, buffered methods) or a continuation
 
 // returns true if we've seen all the overloaded methods now for the current node n, else false.
-//  If n is not an overloaded method, returns false.
-//  If n has already been seen here, returns false.
+//  So: If n is not an overloaded method, returns false.
+//  And: If n has already been seen here, returns false (since you shouldn't call again after true),
+//   hence the previous call returned you false.
 bool CFFI::emit_overloaded_defgeneric_and_defun(Node *n,
 						String* sym_name2,
 						String* args_placeholder,
@@ -862,61 +836,6 @@ bool CFFI::emit_overloaded_defgeneric_and_defun(Node *n,
 		     arme.is_dtor,
 		     vit
 		     );
-
-#if 0
-    // move to retreive_av, to re-use it
-
-    String* renamed = Char(Getattr(n,"memberfunctionHandler:sym:name")); // compare for regular non-static.
-    String* renamed_class_name =0;
-    String* class_dot_method   =0;
-
-    if (renamed) {
-
-      renamed_class_name               = Getattr(Getattr(n,"parentNode"),"classDeclaration:name");
-      class_dot_method                 = NewStringf("%s.%s",renamed_class_name, renamed);
-
-    }  else {
-
-      // is it a ctor?
-      renamed = Char(Getattr(n,"constructorDeclaration:sym:name"));      
-      if (renamed && Getattr(n,"constructorHandler:view")) {
-
-	renamed_class_name               = NewStringf("%s",renamed);
-	class_dot_method                 = NewStringf("%s.%s",renamed_class_name, renamed);
-	arme.is_ctor = true;
-	
-      } else {
-
-	// is it a dtor?
-	renamed = Char(Getattr(n,"destructorDeclaration:sym:name"));      
-        if (renamed && Getattr(n,"destructorHandler:view")) {
-
-	  renamed_class_name               = NewStringf("%s",renamed);
-	  class_dot_method                 = NewStringf("%s.%s",renamed_class_name, renamed);
-	  arme.is_dtor = true;
-
-	} else {
-	  // default to ...
-	  renamed = Char(Getattr(n,"sym:name"));
-	  renamed_class_name               = Getattr(Getattr(n,"parentNode"),"classDeclaration:name");
-	  class_dot_method                 = NewStringf("%s.%s",renamed_class_name, renamed);
-	}}}
-
-    assert(renamed);
-    
-    o2vs_it vit = o2vs.find(Char(class_dot_method));
-    DV(printf("dump of os2vs after looking for '%s'\n", Char(class_dot_method)));
-    DV(for (o2vs_it jit = o2vs.begin(); jit != o2vs.end(); ++jit) { printf("%s\n", jit->first.c_str()); } );
-
-    if(vit == o2vs.end()) {
-      av = new arity_vecset;
-      o2vs[Char(class_dot_method)] = av;      
-    } else {
-      av = vit->second;
-    }
-
-    // end retreive_av()
-#endif
 
     
     // leave vit pointing to the o2vs entry, in case it is time to delete it, a little later...
@@ -1469,8 +1388,6 @@ bool CFFI::emit_overloaded_initialize_instance(Node* n) {
   ArityVector& defgen_av       = av->av; 
   AritySet&    defgen_arityset = av->arityset;
 
-  //String* renamed_class_name = defgen_av[0].renamed_class_name;
-
   int i = 0;
 
   DV( {
@@ -1528,9 +1445,6 @@ bool CFFI::emit_overloaded_initialize_instance(Node* n) {
       required_arg_set.insert(*it);
     }
 
-    //int  num_args = an.size();
-    //    for (list<string>::const_iterator it = an.begin(); it != an.end(); ++it, ++j )
-    //      {
 	if (first) { // first stanza
 	  first = false; 
 	  Printf(f_clos,"    (cond ");
@@ -1559,14 +1473,6 @@ bool CFFI::emit_overloaded_initialize_instance(Node* n) {
 	       arme.args_call
 	       );
 
-	/*
-	       "((and            intref charstar string2   ;; <- *required* param\n"
-	       "           (and (not (or                dub intval   ;; <- *forbidden* param\n"
-	       "							     ))))\n"
-	       "	   (setf (slot-value obj 'ff-pointer)  (new_Vlad__SWIG_1 intref charstar string2)))\n",
-	 */
-	//      }
-    
       
   } // end kit over defgen_av
 
@@ -1574,106 +1480,6 @@ bool CFFI::emit_overloaded_initialize_instance(Node* n) {
     Printf(f_clos,
 	   "	  (t (error \"no C++ constructor for class '%s' matched your combination of keyword parameters\"))))\n\n", 
 	 defgen_av[0].renamed_class_name);
-
-  /*
-
-INPUT:
-
-class Vlad {
-
-public:
-  Vlad(int intref, char* charstar, double dub);
-  Vlad(int intref, char* charstar, char* string2);
-  Vlad(int intref, char* charstar);
-  Vlad(int intval);
-  Vlad();
-};
-
-LISP OUTPUT (already done elsewhere. Not handled in overloaded_constructorHandler(). ) 
-    see below for CLOS-LISP desired output.
-
-(cffi:defcfun ("_wrap_new_Vlad__SWIG_0" new_Vlad__SWIG_0) :pointer
-  (intref :int)
-  (charstar :string)
-  (dub :double))
-
-(cl:export 'new_Vlad__SWIG_0)
-
-(cffi:defcfun ("_wrap_new_Vlad__SWIG_1" new_Vlad__SWIG_1) :pointer
-  (intref :int)
-  (charstar :string)
-  (string2 :string))
-
-(cl:export 'new_Vlad__SWIG_1)
-
-(cffi:defcfun ("_wrap_new_Vlad__SWIG_2" new_Vlad__SWIG_2) :pointer
-  (intref :int)
-  (charstar :string))
-
-(cl:export 'new_Vlad__SWIG_2)
-
-(cffi:defcfun ("_wrap_new_Vlad__SWIG_3" new_Vlad__SWIG_3) :pointer
-  (intval :int))
-
-(cl:export 'new_Vlad__SWIG_3)
-
-(cffi:defcfun ("_wrap_new_Vlad__SWIG_4" new_Vlad__SWIG_4) :pointer)
-
-(cl:export 'new_Vlad__SWIG_4)
-
-(cffi:defcfun ("_wrap_Vlad_equals__SWIG_0" Vlad_equals__SWIG_0) :int
-  (self :pointer)
-  (intval :int))
-
-
-  CLOS-LISP desired output:
-  OUTPUT:
-
-
-  ; if there are any ambiguities, then require this:
-(cl:defmethod initialize-instance 
-	      :after ((obj Vlad) 
-		      &key 
-		      (intref) 
-		      (charstar) 
-		      (dub) 
-		      (string2) 
-		      (intval)
-		      )
-
-    (cond ((and            intref charstar dub   ;; <- *required* param
-           (and (not (or         string2 intval   ;; <- *forbidden* param
-						))))
-	   (setf (slot-value obj 'ff-pointer)  (new_Vlad__SWIG_0 intref charstar dub)))
-
-	  
-          ((and            intref charstar string2   ;; <- *required* param
-           (and (not (or                dub intval   ;; <- *forbidden* param
-							     ))))
-	   (setf (slot-value obj 'ff-pointer)  (new_Vlad__SWIG_1 intref charstar string2)))
-
-
-	  ((and                    intref charstar  ;; *required*
-	   (and (not (or        dub string2 intval  ;; *forbidden*
-							))))
-	   (setf (slot-value obj 'ff-pointer)  (new_Vlad__SWIG_2 intref charstar)))
-
-
-	  ((and                                  intval ;; *required*
-           (and (not (or    charstar dub string2 intref ;; *not permitted*
-								  ))))
-	   (setf (slot-value obj 'ff-pointer)  (new_Vlad__SWIG_3 intval )))
-
-
-	  ((and t                                ;; *no arguments required*
-           (and (not (or    intref charstar dub string2 intval ;; *no arguments permitted*
-			    ))))
-	   (setf (slot-value obj 'ff-pointer)  (new_Vlad__SWIG_4)))
-	  (t (error "no C++ constructor for class 'Vlad' matched your combination of keyword parameters"))))
-
-
-*/
-
 
   return true;
 
@@ -1769,13 +1575,15 @@ void CFFI::emit_initialize_instance(Node *n) {
 
   // delegate overloaded constructors to emit_overloaded_defgeneric_and_defun();
   //  in order to re-use all the overload handling machinery.
-  //  It in turn will call emit_overloaded_initialize_instance() as needed.
+  //  When we get a true (vs false bool) back, that's are signal that
+  //  we've seen all the overloaded versions of this function, and it's
+  //  time to call emit_overloaded_initialize_instance().
   //
   if (overloaded) {
 
     if (emit_overloaded_defgeneric_and_defun(n,
-					 sym_name2,         // dup
-					 args_placeholder,  // dup
+					 sym_name2,         //
+					 args_placeholder,  //
 					 defcfun_call,      // 
 					 args_call,         // 
 					 args_names,        // 
@@ -1962,15 +1770,6 @@ int CFFI::functionWrapper(Node *n) {
     }
   } else
     emit_defun(n, iname);
-
-  //   if (!overloaded || !Getattr(n, "sym:nextSibling")) {
-  //     update_package_if_needed(n);
-  //     emit_buffered_defuns(n);
-  //     // this is the last overload.
-  //     if (overloaded) {
-  //       emit_dispatch_defun(n);
-  //     }
-  //   }
 
   Delete(wname);
   DelWrapper(f);
@@ -2180,6 +1979,9 @@ int CFFI::enumDeclaration(Node *n) {
 
   return SWIG_OK;
 }
+
+
+
 void CFFI::emit_class(Node *n) {
 
 #ifdef CFFI_WRAP_DEBUG
@@ -2633,34 +2435,6 @@ enum BE
 String *CFFI::lispy_name(char *name) {
     return NewString(name);
 }
-
-#if 0
-// Strongly depracated:
-// the orignal lispy_name(), here so that nobody thinks of reintroducing it: DON'T USE IT!! 
-// Doing cutesy name manging like this messes up
-// the differentiation between case sensitive objects. 
-//
-//less flexible as it does the conversion in C, the lispify name does the conversion in lisp
-String *CFFI::old_bad_lispy_name(char *name) {
-  bool helper = false;
-  String *new_name = NewString("");
-  for (unsigned int i = 0; i < strlen(name); i++) {
-    if (name[i] == '_' || name[i] == '-') {
-      Printf(new_name, "%c", '-');
-      helper = false;
-    } else if (name[i] >= 'A' && name[i] <= 'Z') {
-      if (helper)
-	Printf(new_name, "%c", '-');
-      Printf(new_name, "%c", ('a' + (name[i] - 'A')));
-      helper = false;
-    } else {
-      helper = true;
-      Printf(new_name, "%c", name[i]);
-    }
-  }
-  return new_name;
-}
-#endif
 
 extern "C" Language *swig_cffi(void) {
   return new CFFI();
