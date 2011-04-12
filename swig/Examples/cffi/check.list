@@ -1,3 +1,7 @@
 # see top-level Makefile.in
 structs-as-classes
+overctor
+simple
+class
+small-rename-test
 
