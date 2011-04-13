@@ -22,7 +22,10 @@ char cvsroot_cffi_cxx[] = "$Id: cffi.cxx 12524 2011-03-09 21:42:38Z wsfulton $";
 #include <set>
 #include <vector>
 #include <algorithm>
+#include <iterator>
+#include <sstream>
 #include <map>
+#include <list>
 #include <string>
 #include <assert.h>
 #include <unistd.h>
@@ -52,8 +55,26 @@ extern int enDV; // off by default
 
 #endif // DEBUGVIEW
 
+// copy to stdout for debugging as well.
+int PrintfTeeStdout(DOH *obj, const char *format, ...) {
+  va_list ap;
+  int ret;
+  va_start(ap, format);
+  DohvPrintf(stdout, format, ap);
+  ret = DohvPrintf(obj, format, ap);
+  va_end(ap);
+  return ret;
+}
+
+
 int enDV=0;
 
+using std::list;
+using std::set;
+using std::string;
+
+// static copy to work with, rather than temps.
+list<string> static_argnames_list;
 
 // Arme: and arity and method holder classes; caching state until we
 // emit an overloaded method dispatcher after getting a
@@ -68,6 +89,7 @@ struct Arme {
   String* args_placeholder;
   String* defcfun_call;
   String* args_call;
+  String* args_ctor;
   String* args_names;
   String* sym_name_preswig;
 
@@ -75,6 +97,62 @@ struct Arme {
   String* renamed_class_name;
   String* class_dot_method;
   String* renamed_method;
+
+  std::list<std::string> argnames;
+
+  bool    is_static;
+  bool    is_ctor;
+  bool    is_dtor;
+  void clear() {
+    arity = -1;
+    method =
+      swig_method_num =
+      wrapname =
+      sym_name2 =
+      args_placeholder =
+      defcfun_call =
+      args_call =
+      args_ctor =
+      args_names =
+      sym_name_preswig =
+      renamed_and_unscoped_method_name =
+      renamed_class_name =
+      class_dot_method =
+      renamed_method =
+      0;
+    argnames.clear();
+  }
+  Arme() { clear(); }
+  void dump() const {
+    printf(      "arity           : %d\n",arity);
+    Printf(stdout,"method          : %s\n",method);
+    Printf(stdout,"swig_method_num : %s\n",swig_method_num);
+    Printf(stdout,"wrapname        : %s\n",wrapname);
+
+    printf(      "\n");
+    Printf(stdout,"sym_name2 : %s\n",sym_name2);
+    Printf(stdout,"args_placeholder : %s\n",args_placeholder);
+    Printf(stdout,"defcfun_call : %s\n",defcfun_call);
+    Printf(stdout,"args_call : %s\n",args_call);
+    Printf(stdout,"args_names : %s\n",args_names);
+    Printf(stdout,"sym_name_preswig : %s\n",sym_name_preswig);
+
+    printf(      "\n");
+    Printf(stdout,"renamed_and_unscoped_method_name : %s\n",renamed_and_unscoped_method_name);
+    Printf(stdout,"renamed_class_name : %s\n",renamed_class_name);
+    Printf(stdout,"class_dot_method : %s\n",class_dot_method);
+    Printf(stdout,"renamed_method : %s\n",renamed_method);
+
+    printf(      "\n");
+    printf(      "is_static       : %d\n",is_static);
+    printf(      "is_ctor         : %d\n",is_ctor);
+    printf(      "is_dtor         : %d\n",is_dtor);
+
+    printf(" argnames:\n");
+    for (list<string>::const_iterator it = argnames.begin(); it != argnames.end(); ++it) {
+      printf("     %s\n",(*it).c_str());
+    }
+  }
 };
 
 
@@ -98,12 +176,15 @@ struct arity_vecset {
   ArityVector  av;
 };
 
+  // static
   Arme         arme;
 
 
 typedef std::map< std::string, arity_vecset*>  overload2vs;
 typedef std::map< std::string, arity_vecset*>::iterator  o2vs_it;
 overload2vs o2vs;
+
+typedef std::set<string>::const_iterator csit;
 
 
 //#define CFFI_DEBUG
@@ -165,6 +246,7 @@ private:
   void emit_defun(Node *n, String *name);
   void emit_defmethod(Node *n);
   void emit_initialize_instance(Node *n);
+  bool emit_overloaded_initialize_instance(Node* n);
   void emit_getter(Node *n);
   void emit_setter(Node *n);
   void emit_class(Node *n);
@@ -177,8 +259,18 @@ private:
 					    String* defcfun_call,
 					    String* args_call,
 					    String* args_names,
-					    String* sym_name_preswig);
+					    String* sym_name_preswig,
+					    String* args_ctor);
 
+  arity_vecset* retreive_av(Node* n,
+			    String*& renamed,
+			    String*& renamed_class_name,
+			    String*& class_dot_method,
+			    bool& is_ctor,
+			    bool& is_dtor,
+			    o2vs_it& vit
+			    );
+  
   int     get_arity_of_decl(Node *n);
   String* get_swig_method_number_suffix(Node* n);
   void    emit_lispfile_preamble(Node* f);
@@ -186,7 +278,9 @@ private:
   void get_arg_details(Node* n, //in
 		       String*& args_placeholder,
 		       String*& args_names,
-		       String*& args_call
+		       String*& args_call,
+		       String*& args_ctor,
+		       list<string>& argnames
 		       );
   int count_sym_overloaded_methods(Node* n);
 
@@ -254,27 +348,14 @@ void CFFI::main(int argc, char *argv[]) {
 void CFFI::emit_lispfile_preamble(Node* f) {
 
   Swig_banner_target_lang(f, ";;;");
-  //  Swig_banner(f_clos);
 
   String* extra_use_pkgs = NewStringf(":ccl");
 
   Printf(f,
-	 //	 "\n"
-	 //	 "(defpackage :swig\n"
-	 //	 "  (:use :common-lisp :cffi :ccl)\n"
-	 //	 "  (:export #:*swig-identifier-converter* #:*swig-module-name*\n"
-	 //	 "           #:*void* #:*swig-export-list*)\n"
-	 //	 "  (:shadowing-import-from :cffi :defcallback))\n"
-	 //	 "(in-package :swig)\n"
-	 //	 "\n"
-	 //	 "(eval-when (:compile-toplevel :load-toplevel :execute)\n"
-	 //	 "  (defparameter *swig-identifier-converter* 'identifier-convert-null)\n"
-	 //	 "  (defparameter *swig-module-name* :micro))\n"
 	 "\n"
 	 "(defpackage :%s\n"
 	 "  (:shadowing-import-from :cffi :defcallback)\n"
 	 "  (:use :common-lisp :cffi %s))\n"
-	 //	 "  (:use :common-lisp :swig :cffi :ccl))\n"
 	 "\n"
 	 "(in-package :%s)\n"
 	 "\n",
@@ -370,10 +451,10 @@ int CFFI::top(Node *n) {
 }
 
 int CFFI::classHandler(Node *n) {
-#ifdef CFFI_DEBUG
+DV( {
   Printf(stderr, "class %s::%s\n", "some namespace",  //current_namespace,
    Getattr(n, "sym:name"));
-#endif
+ } );
   String *name = Getattr(n, "sym:name");
   String *kind = Getattr(n, "kind");
 
@@ -402,29 +483,38 @@ int CFFI::classHandler(Node *n) {
 }
 
 int CFFI::constructorHandler(Node *n) {
-#ifdef CFFI_DEBUG
+DV( {
   Printf(stderr, "constructor %s\n", Getattr(n, "name"));
   Printf(stderr, "constructor %s\n and %s and %s", Getattr(n, "kind"), Getattr(n, "sym:name"), Getattr(n, "allegrocl:old-sym:name"));
-#endif
+ } );
   Setattr(n, "cffi:constructorfunction", "1");
   // Let SWIG generate a global forwarding function.
   return Language::constructorHandler(n);
 }
 
 int CFFI::destructorHandler(Node *n) {
-#ifdef CFFI_DEBUG
+DV( {
   Printf(stderr, "destructor %s\n", Getattr(n, "name"));
-#endif
+ } );
 
   // Let SWIG generate a global forwarding function.
   return Language::destructorHandler(n);
 }
 
-// return the arity, or number of formal parameters to a method, for the n's declaration decl.
-//    return -1 on error (no such attribute "decl").
-//
-int CFFI::get_arity_of_decl(Node *n) {
 
+// Four helper functions for CFFI::get_arity_of_decl
+//
+// null_to_stopper()
+// comma_count() : determine number of arguments, skipping commas inside recursively defined function pointers, etc.
+// main_test_comma_count()
+// weigh_comma_count_vs_emit(int emit_npar, int comma_npar)
+
+const char* null_to_stopper(const char* a, const char* stopper) { if (NULL==a) { return stopper; } else { return a; }}
+
+int comma_count(const char* s) {
+
+  // the parenthesis checking in comma_count() is to account for the nesting of the commas, e.g. in the type:
+  // arity seen was: 5  for  BinExp_interpretAssignCommon__SWIG_0   :  f(p.InterState,p.f(p.Type,p.Expression,p.Expression).p.Expression,int).p.  :  __SWIG_0
   /*
     examples of the different arity classes we might find:
             | decl         - "f()."       <- class 0   ; the distance between the "(" and ")" is 1.
@@ -441,40 +531,113 @@ int CFFI::get_arity_of_decl(Node *n) {
    so we need to track any gaps too.
 
   */
-  String* decl = Getattr(n,"decl");
-  if (0==decl) return -1;
 
-  String* lparen = Strstr(decl,"(");
-  if (0==lparen) return -1;
+  const char* start = s;
+  if(0==start) return 0;
 
-  String* rparen = Strstr(decl,")");
-  if (0==rparen) return -1;
-
-  String* zero_arity_paren = Strstr(decl,"()");
-  if (zero_arity_paren) return 0;
-
-  char* lpar = Char(lparen);
-  //char* rpar = Char(rparen);
+  const char* stop = start + strlen(s);
 
   int   comma_count = 0;
-  char* start = lpar + 1;
-  char* found = 0;
+  std::list<int> comma_stack;
 
-  while (1) {
-    found = strstr(start,",");
-    if (!found) break;
-    ++comma_count;
-    start = found+1;
-  }
+  const char* c = stop; // next commaa
+  const char* l = stop; // next left paren
+  const char* r = stop; // next right paren
+  const char* n = start; // next token of import, one of c, l, r, or 
 
-  // static methods don't have a this pointer.
-  Node* storage = Getattr(n,"storage");
-  if (storage && 0==Strcmp(storage,"static")) {
-    return comma_count;
-  }
+  while (n < stop) {
 
-  return comma_count + 1;
+    c = null_to_stopper(strstr(n,","),stop);
+    l = null_to_stopper(strstr(n,"("),stop);
+    r = null_to_stopper(strstr(n,")"),stop);
+
+    using std::min;
+    n = min(stop,min(c,min(l,r)));
+
+    if (n==stop) {
+      break;
+    }
+    else if (n==c) {
+      DV(printf("found a comma, increment top of stack -> %d , due to '%s'.   stack_size=%d\n",comma_stack.back() + 1,n,(int)comma_stack.size()));
+      ++(comma_stack.back());
+    }
+    else if (n==l) {
+      comma_stack.push_back(0);
+      if (n+1 < stop && *(n+1) != ')') {
+	++(comma_stack.back()); // we have an arg count of 1
+      }
+      DV(printf("found a left paren, pushing  %d, due to '%s'.   stack_size=%d\n",comma_stack.back(),n,(int)comma_stack.size()));
+    }
+    else if (n==r) {
+      DV(printf("found a right paren, popping top, due to '%s'.   stack_size=%d\n",n,(int)comma_stack.size()));
+      if (comma_stack.size() == 0) {
+	assert(0);
+      }
+      int last = comma_stack.back();
+      int first = comma_stack.front();
+      comma_stack.pop_back();
+      if (comma_stack.empty()) {
+	DV(printf("down to nothing on the stack , we must be done with last = %d,   due to '%s'.   stack_size=%d\n", last,n,(int)comma_stack.size()));
+	return last;
+      }
+      if (comma_stack.size() == 1) {
+	DV(printf("saw right paren with stack size 1 after pop_back. stack has %d at bottom, and we just discarded %d.   stack_size=%d\n", first, last, (int)comma_stack.size()));
+      }
+    } else {
+      // should never get here.
+      assert(0);
+    }
+
+    ++n;
+  } // end while n < stop
+
+  // get the top level comma count, neglecting commas nested inside parentheses.
+  comma_count = comma_stack.front();
+  return comma_count;
 }
+
+void main_test_comma_count() {
+  printf("%d\n",comma_count("f( my1, args2, 3f(with,nested,parens,f(and,commas),which), 4we_dont_want)"));
+  printf("%d\n",comma_count("f()"));
+  printf("%d\n",comma_count("f(one)"));
+  printf("%d\n",comma_count("f(one,two)"));
+}
+
+
+
+// return the arity, or number of formal parameters to a method, for the n's declaration decl.
+//    return -1 on error (no such attribute "decl").
+//
+int CFFI::get_arity_of_decl(Node *n) {
+
+  // use the swig supplied routine in Source/Modules/emit.cxx, emit_num_required(), since
+  // it is likely more accurate that my approximation below.
+
+  String* decl = Getattr(n,"decl");
+  if (0==decl) return -1; // weigh_comma_count_vs_emit(-1,emit_npar);
+
+  String* lparen = Strstr(decl,"(");
+  if (0==lparen) return -1; // weigh_comma_count_vs_emit(-1,emit_npar);
+
+  String* rparen = Strstr(decl,")");
+  if (0==rparen) return -1; // weigh_comma_count_vs_emit(-1,emit_npar);
+
+  String* zero_arity_paren = Strstr(decl,"()");
+  if (zero_arity_paren) return 0; // weigh_comma_count_vs_emit(0,emit_npar);;
+
+
+  int my_arg_count = comma_count(Char(lparen)); 
+  // NB It is very important to start here, so that we skipping the wierd aruments after the close paren
+  // for example, this declaration
+  // ./expression.h:    Expression *interpretAssignCommon(InterState *istate, Expression *(*fp)(Type *, Expression *, Expression *), int post = 0);
+  // which swig gives a decl of:
+  // "f(p.InterState,p.f(p.Type,p.Expression,p.Expression).p.Expression,int).p."
+
+  DV(printf("my_arg_count from comma_count(decl) is %d\n",my_arg_count));
+
+  return my_arg_count; // weigh_comma_count_vs_emit(my_arg_count + 1, emit_npar);
+
+} // end get_arity_of_decl
 
 
 String* CFFI::get_swig_method_number_suffix(Node* n) {
@@ -497,6 +660,105 @@ String* CFFI::get_swig_method_number_suffix(Node* n) {
   return method_suffix;
 }
 
+
+
+void get_final_method_name(Node* n, String*& renamed, String*& renamed_class_name, String*& class_dot_method, bool& is_ctor, bool& is_dtor) {
+
+  renamed = Char(Getattr(n,"memberfunctionHandler:sym:name")); // compare for regular non-static.
+
+  DV(Printf(stdout,"renamed is %s\n",renamed));
+  
+  renamed_class_name =0;
+  class_dot_method   =0;
+
+    if (renamed) {
+
+      renamed_class_name               = Getattr(Getattr(n,"parentNode"),"classDeclaration:name");
+      class_dot_method                 = NewStringf("%s.%s",renamed_class_name, renamed);
+
+    }  else {
+
+      // is it a ctor?
+      renamed = Char(Getattr(n,"constructorDeclaration:sym:name"));      
+      if (renamed && Getattr(n,"constructorHandler:view")) {
+
+	renamed_class_name               = NewStringf("%s",renamed);
+	class_dot_method                 = NewStringf("%s.%s",renamed_class_name, renamed);
+	is_ctor = true;
+	
+      } else {
+
+	// is it a dtor?
+	renamed = Char(Getattr(n,"destructorDeclaration:sym:name"));      
+        if (renamed && Getattr(n,"destructorHandler:view")) {
+
+	  renamed_class_name               = NewStringf("%s",renamed);
+	  class_dot_method                 = NewStringf("%s.%s",renamed_class_name, renamed);
+	  is_dtor = true;
+
+	} else {
+	  // default to ...
+	  renamed = Char(Getattr(n,"sym:name"));
+	  renamed_class_name               = Getattr(Getattr(n,"parentNode"),"classDeclaration:name");
+	  class_dot_method                 = NewStringf("%s.%s",renamed_class_name, renamed);
+	}}}
+
+}
+
+
+// print out one label from each contained
+void dump(ArityVector& defgen_av) {
+  Arme  tarme; // tmp
+  ArityVectorIt avend = defgen_av.end();
+  ArityVectorIt ait = defgen_av.begin();
+  int i = 0;
+  for (; ait != avend; ++i, ++ait) {
+    tarme = *ait;
+    Printf(stdout,"defgen_av[%d] = class_dot_method : %s\n", i, Char(tarme.class_dot_method));
+  }
+}
+
+
+arity_vecset* CFFI::retreive_av(Node* n,
+				String*& renamed,
+				String*& renamed_class_name,
+				String*& class_dot_method,
+				bool& is_ctor,
+				bool& is_dtor,
+				o2vs_it& vit
+				) {
+    arity_vecset* av = 0;
+    is_ctor = false;
+    is_dtor = false;
+
+    // sym_name_preswig is FileName_compare
+    // sym_name_preswig is compare, for the static overload.
+
+    // call get_final_method_name() here
+
+    renamed_class_name =0;
+    class_dot_method   =0;
+
+    // fill in renamed, renamed_class_method, class_dot_method
+    get_final_method_name(n, renamed, renamed_class_name, class_dot_method, is_ctor, is_dtor); 
+
+    assert(renamed);
+
+    vit = o2vs.find(Char(class_dot_method));
+    DV(printf("dump of os2vs after looking for '%s'\n", Char(class_dot_method)));
+    DV(for (o2vs_it jit = o2vs.begin(); jit != o2vs.end(); ++jit) { printf("%s\n", jit->first.c_str()); } );
+
+    if(vit == o2vs.end()) {
+      av = new arity_vecset;
+      o2vs[Char(class_dot_method)] = av;      
+    } else {
+      av = vit->second;
+    }
+
+    return av;
+}
+
+
 // CFFI::emit_overloaded_defgeneric_and_defun
 //    has to operate in one of two modes: either save the
 //    signature until the last, or dump them all now that
@@ -504,20 +766,24 @@ String* CFFI::get_swig_method_number_suffix(Node* n) {
 //    by either being the start of a new set (discard all
 //    old, buffered methods) or a continuation
 
-// returns true if we printed or cached for later printing, or is already handled; false otherwise if defmethod needs to print it.
+// returns true if we've seen all the overloaded methods now for the current node n, else false.
+//  So: If n is not an overloaded method, returns false.
+//  And: If n has already been seen here, returns false (since you shouldn't call again after true),
+//   hence the previous call returned you false.
 bool CFFI::emit_overloaded_defgeneric_and_defun(Node *n,
 						String* sym_name2,
 						String* args_placeholder,
 						String* defcfun_call,
 						String* args_call,
 						String* args_names,
-						String* sym_name_preswig) {
+						String* sym_name_preswig,
+						String* args_ctor) {
 
     // guarantee that we only emit the manual dispatching code
     // and method declarations once and only once.
     if (Getattr(n,"cffi:emit_overloaded_defgeneric")) {
       DV(Printf(stdout,"^^^^^^^^^ : cffi:defgeneric_and_defun_already_done was already set for %s, aborting early.\n",sym_name2));
-      return true; 
+      return false;
     } else {
       // set it so we will know next time through
       Setattr(n,"cffi:emit_overloaded_defgeneric","1");
@@ -526,7 +792,12 @@ bool CFFI::emit_overloaded_defgeneric_and_defun(Node *n,
     String* overloaded = Getattr(n,"sym:overloaded");
     if (!overloaded) return false;
 
-  // debug:
+    DV( {
+	if (overloaded) {
+	  int ovcount = count_sym_overloaded_methods(n);
+	  printf("%s  has ovcount = %d\n",Char(sym_name_preswig),ovcount);
+	}});
+    
     DV( {
   printf("n:\n");
   if (n)                 Swig_print(n,enDV);
@@ -547,33 +818,42 @@ bool CFFI::emit_overloaded_defgeneric_and_defun(Node *n,
   //   methods that overload on different numbers of arguments (arity).
 
     arity_vecset* av = 0;
+    String* renamed            = 0;
+    String* renamed_class_name = 0;
+    String* class_dot_method   = 0;
+    arme.clear();
 
-    // sym_name_preswig is FileName_compare
-    // sym_name_preswig is compare, for the static overload.
+    o2vs_it vit;
 
-    String* renamed = Char(Getattr(n,"memberfunctionHandler:sym:name")); // compare for regular non-static.
+    av = retreive_av(n,
+		     renamed,
+		     renamed_class_name,
+		     class_dot_method,
+		     arme.is_ctor,
+		     arme.is_dtor,
+		     vit
+		     );
 
-    if (renamed == 0) {
-      renamed = Char(Getattr(n,"sym:name"));
-    }
-
-    o2vs_it vit = o2vs.find(Char(renamed));
-    DV(printf("dump of os2vs after looking for '%s'\n", Char(renamed)));
-    DV(for (o2vs_it jit = o2vs.begin(); jit != o2vs.end(); ++jit) { printf("%s\n", jit->first.c_str()); } );
-
-    if(vit == o2vs.end()) {
-      av = new arity_vecset;
-      o2vs[Char(renamed)] = av;      
-    } else {
-      av = vit->second;
-    }
+    
+    // leave vit pointing to the o2vs entry, in case it is time to delete it, a little later...
 
     AritySet&    defgen_arityset = av->arityset;
     ArityVector& defgen_av       = av->av; 
 
     // save the node's details (which disappear) so we can emit a full method plus arity
     // dispatch function later.
-     arme.arity  = get_arity_of_decl(n);     
+     arme.arity  = get_arity_of_decl(n);
+
+     // static methods don't have a this pointer.
+     Node* storage = Getattr(n,"storage");
+     if (storage && 0==Strcmp(storage,"static")) {
+       // static methods keep to the observed/declared count.
+       arme.is_static = true;
+     } else {
+       arme.arity++; // count the 'this' pointer.
+       arme.is_static = false;
+     }
+
      arme.method           = Copy(n);
      arme.swig_method_num  = Copy(get_swig_method_number_suffix(n));
      arme.wrapname         = Copy(Getattr(n,"wrap:name"));
@@ -582,6 +862,7 @@ bool CFFI::emit_overloaded_defgeneric_and_defun(Node *n,
      arme.args_placeholder = Copy(args_placeholder);
      arme.defcfun_call     = Copy(defcfun_call);
      arme.args_call        = Copy(args_call);
+     arme.args_ctor        = Copy(args_ctor);
      arme.args_names       = Copy(args_names);
 
      // the original sym_name_preswig wasn't consist across static 
@@ -589,30 +870,52 @@ bool CFFI::emit_overloaded_defgeneric_and_defun(Node *n,
      // once we have the two necessary components.
      //      no good:   arme.sym_name_preswig = Copy(sym_name_preswig);
 
-     arme.renamed_and_unscoped_method_name = Copy(Getattr(arme.method,"memberfunctionHandler:sym:name"));
-     arme.renamed_class_name               = Copy(Getattr(Getattr(arme.method,"parentNode"),"classDeclaration:name"));
+     arme.renamed_and_unscoped_method_name = NewStringf("%s",renamed);
+     arme.renamed_class_name               = Copy(renamed_class_name);
      arme.renamed_method   = NewStringf("%s",renamed);
-     arme.class_dot_method = NewStringf("%s.%s",arme.renamed_class_name, renamed);
+     arme.class_dot_method = Copy(class_dot_method);
 
      // good across static and non-static overloaded methods:
      arme.sym_name_preswig = NewStringf("%s_%s",arme.renamed_class_name, arme.renamed_method);
      sym_name_preswig = arme.sym_name_preswig; // we use it later, stay consistent.
+
+    
+    String *cur_args_placeholder = NewStringf("");
+    String *cur_args_names = NewStringf("");
+    String *cur_args_call = NewStringf("");
+    String *cur_args_ctor = NewStringf("");
+    
+    // fills in the last 3 args as side effects
+    get_arg_details(n, cur_args_placeholder, cur_args_names, cur_args_call, cur_args_ctor,static_argnames_list);
+    arme.argnames = static_argnames_list; // hold onto argnames
 
      defgen_av.push_back(arme);
      defgen_arityset.insert(arme);
 
      DV(Printf(stdout,"arity seen was: %d  for  %s   :  %s  :  %s\n", arme.arity, Getattr(n,"sym:name"), Getattr(n,"decl"),Getattr(n,"sym:overname")));
 
-     if (vit == o2vs.end()) return true; // it was new
+     if (vit == o2vs.end()) return false; // it was new, there must be at least one more since it is overloaded.
 
      // not new, have we got all of them?
-     if ((int)defgen_av.size() < count_sym_overloaded_methods(n)) return true; // no, come back later
+     int nover  = count_sym_overloaded_methods(n);
+     int avsize = (int)defgen_av.size();
+
+     if (avsize < nover) return false; // no, come back later
 
      // yes, we've seen them all
-     assert((int)defgen_av.size() == count_sym_overloaded_methods(n));
+     assert(avsize == nover);
+     if (avsize > nover) {
+       // how is this possible?
+       dump(defgen_av);
+       // because we weren't erasing completed classes.
+     }
      DV(printf("issuing all %d generic methods + manual dispatcher now\n", (int)defgen_av.size()));
      assert(defgen_av.size() !=0);
      std::sort(defgen_av.begin(), defgen_av.end(), LessThanArity());
+     
+     if (arme.is_ctor) {
+       return true; // let caller call emit_overloaded_initialize_instance(n) when they are ready.
+     }
 
   // INVAR: defgen_arityset and defgen_av are loaded and ready.
 
@@ -640,20 +943,24 @@ bool CFFI::emit_overloaded_defgeneric_and_defun(Node *n,
     }
     DV(printf("found %d in arity class %d\n",num_this_arity, cur_arity));
     
-    String *cur_args_placeholder = NewStringf("");
-    String *cur_args_names = NewStringf("");
-    String *cur_args_call = NewStringf("");
+    cur_args_placeholder = NewStringf("");
+    cur_args_names = NewStringf("");
+    cur_args_call = NewStringf("");
+    cur_args_ctor = NewStringf("");
     
     // fills in the last 3 args as side effects
-    get_arg_details(it->method, cur_args_placeholder, cur_args_names, cur_args_call);
+    get_arg_details(it->method, cur_args_placeholder, cur_args_names, cur_args_call, cur_args_ctor,static_argnames_list);
 
-       DV( { printf("debug: cur_args_placeholder:\n");
+    it->argnames = static_argnames_list; //copy to hold onto the argnames list
+
+       DV( { printf("cur_args_placeholder:\n");
 	     Swig_print(cur_args_placeholder);
-	     printf("debug: cur_args_names:\n");
+	     printf("cur_args_names:\n");
 	     Swig_print(cur_args_names);
-	     printf("debug: cur_args_call:\n");
+	     printf("cur_args_call:\n");
 	     Swig_print(cur_args_call);
 	       });
+
 
     Printf(f_clos,"\n(cl:defgeneric  %%%s_%d (%s)",sym_name_preswig, cur_arity, cur_args_names);
 
@@ -667,15 +974,14 @@ bool CFFI::emit_overloaded_defgeneric_and_defun(Node *n,
       cur_args_names = NewStringf("");
       cur_args_call = NewStringf("");
 
-      get_arg_details(kit->method, cur_args_placeholder, cur_args_names, cur_args_call);
+      get_arg_details(kit->method, cur_args_placeholder, cur_args_names, cur_args_call, cur_args_ctor,static_argnames_list);
 
-      // debug
       DV( {
-      printf("debug: cur_args_placeholder:\n");
+      printf("cur_args_placeholder:\n");
       Swig_print(cur_args_placeholder);
-      printf("debug: cur_args_names:\n");
+      printf("cur_args_names:\n");
       Swig_print(cur_args_names);
-      printf("debug: cur_args_call:\n");
+      printf("cur_args_call:\n");
       Swig_print(cur_args_call);
 	});
 
@@ -710,28 +1016,21 @@ bool CFFI::emit_overloaded_defgeneric_and_defun(Node *n,
   for (AritySetIt it = defgen_arityset.begin(); it != en; ++it, ++i) {
     
     arme = *it; // local copy. easy to reference and debug/inspect
-    Printf(f_clos,"   (%d (apply #'%%%s_%d  args))\n", arme.arity + 1, arme.sym_name_preswig, arme.arity );
+    Printf(f_clos,"   (%d (apply #'%%%s_%d  args))\n", arme.arity, arme.sym_name_preswig, arme.arity );
   }
   Printf(f_clos,"))\n\n"); 
   
   Printf(f_clos,"(cl:export '%s)\n\n",arme.class_dot_method);
 
-  // loop it over the arity classes
-       DV(Printf(stdout, "debug args:\n"
-		 "sym_name2        = '%s'\n"
-		 "args_placeholder = '%s'\n"
-		 "defcfun_call     = '%s'\n"
-		 "args_call        = '%s'\n"
-		 "args_names       = '%s'\n"
-		 "\n\n",
-		 sym_name2, // DObject_compare
-		 args_placeholder, // (self DObject) (obj DObject)
-		 defcfun_call, // DObject_compare
-		 args_call, // " (ff-pointer self) (ff-pointer obj)"
-		 args_names));
+  // jea debug : breakpoint to analyze static methods missing name!!
+  if (0==Strcmp("FileName.compare",arme.class_dot_method)) {
+    printf("set breakpoint here for FileName.absolute issue!\n");
+  }
 
+  // cleanup now that we are done with this class.
+  o2vs.erase(vit);
 
-       return true;
+  return true;
 } // end emit_overloaded_defgeneric_and_defun()
 
 
@@ -739,10 +1038,18 @@ bool CFFI::emit_overloaded_defgeneric_and_defun(Node *n,
 void CFFI::get_arg_details(Node* n, //in
 			   String*& args_placeholder,
 			   String*& args_names,
-			   String*& args_call
+			   String*& args_call,
+			   String*& args_ctor,
+			   list<string>& argnames
 			   ) {
 
     ParmList *pl = Getattr(n, "parms");
+
+    argnames.clear();
+    Clear(args_placeholder);
+    Clear(args_names);
+    Clear(args_call);
+    Clear(args_ctor);
 
     DV(printf("parms:\n"));
     DV(Swig_print(pl));
@@ -755,16 +1062,28 @@ void CFFI::get_arg_details(Node* n, //in
       String *argname = Getattr(p, "name");
       String *ffitype = Swig_typemap_lookup("lispclass", p, "", 0);
 
+      int tempargname = 0;
+      if (argname) {
+	// lisp will choke on parameters named t or T. Rename them.
+	if (Strcmp(argname, "t") == 0 || Strcmp(argname, "T") == 0) {
+	  argname = NewStringf("t-arg%d", argnum);
+	  tempargname = 1;
+	}
+
+	Printf(args_ctor, " (%s) \n", argname);
+	argnames.push_back(Char(argname));
+      }
+
       DV( {
       printf("debug parms...here is p:\n");
       Swig_print(p);
-      printf("debug parms...here is argname:\n");
-      Swig_print(argname);
+      if (argname) {
+	printf("debug parms...here is argname:\n");
+	Swig_print(argname);
+      }
       printf("debug parms...here is ffitype:\n");
       Swig_print(ffitype);
 	});
-
-      int tempargname = 0;
 
       if(!first)
 	first = true;
@@ -796,10 +1115,11 @@ void CFFI::get_arg_details(Node* n, //in
 	Printf(args_names, "%s", argname);      
       }
     
-      if (ffitype && Strcmp(ffitype, lispify_name(parent, lispy_name(Char(Getattr(parent, "sym:name"))), "'classname")) == 0)
+      if (ffitype && Strcmp(ffitype, lispify_name(parent, lispy_name(Char(Getattr(parent, "sym:name"))), "'classname")) == 0) {
 	Printf(args_call, " (ff-pointer %s)", argname);
-      else
+      } else {
 	Printf(args_call, " %s", argname);
+      }
 
       Delete(ffitype);
 
@@ -810,15 +1130,17 @@ void CFFI::get_arg_details(Node* n, //in
 
 
     DV({
-      printf("debug: ---- at the end of get_arg_details ---\n");
-      printf("debug: n:\n");
+      printf("---- at the end of get_arg_details ---\n");
+      printf("n:\n");
       Swig_print_node(n);
-      printf("debug: args_placeholder:\n");
+      printf("args_placeholder:\n");
       Swig_print(args_placeholder);
-      printf("debug: args_names:\n");
+      printf("args_names:\n");
       Swig_print(args_names);
-      printf("debug: args_call:\n");
+      printf("args_call:\n");
       Swig_print(args_call);
+      printf("args_ctor:\n");
+      Swig_print(args_ctor);
       });
 
 
@@ -871,17 +1193,41 @@ void CFFI::emit_defmethod(Node *n) {
 
   DV( {
       printf("emit_defmethod called ================================================\n");
-      Swig_print(n,2);
+      Swig_print(n,enDV);
       printf("============================= end emit_defmethod dump ================\n");
     });
+
+  // identify the type of the method -- static or not.
+  //   and is the first or 2nd time through.
+ Node* nt  = Getattr(n,"nodeType");
+ Node* sto = Getattr(n,"storage");
+ Node* static_mfh = Getattr(n,"staticmemberfunctionHandler:sym:name");
+ //Node* cffi_mfh   = Getattr(n,"cffi:staticmemberfunctionHandler");
+
+ bool is_cdecl = (nt && 0==Strcmp(nt, "cdecl"));
+ bool is_static = (sto && 0==Strcmp(sto,"static"));
+ bool is_mfh_callback = (static_mfh != 0);
+ //bool is_cffi_mfh = (cffi_mfh && 0==Strcmp(cffi_mfh,"1"));
+
+  // attribute cffi:memberfunction tells CFFI::functionWrapper to do emit_defmethod(n), so that
+  // another callback happens.  
+  // It is also set by CFFI::memberfunctionHandler().
+  Setattr(n, "cffi:memberfunction", "1");
+
+  if (!is_mfh_callback) {
+    if (is_cdecl && is_static) {
+      return; // come back next time, so we don't issue two defmethods for static member methods.
+    }
+  }
 
   Node *overloaded = Getattr(n, "sym:overloaded");
 
   String *args_placeholder = NewStringf("");
   String *args_names = NewStringf("");
   String *args_call = NewStringf("");
+  String *args_ctor = NewStringf("");
 
-  get_arg_details(n, args_placeholder, args_names, args_call);
+  get_arg_details(n, args_placeholder, args_names, args_call, args_ctor,static_argnames_list);
 
   String *method_name = Getattr(n, "name");
   int x = Replace(method_name, "operator ", "", DOH_REPLACE_FIRST); //  
@@ -939,7 +1285,7 @@ void CFFI::emit_defmethod(Node *n) {
   DV( {printf("debug ======== n:\n");
       Swig_print(n); });
 
-  // call for everybody; it's harmless if not needed.
+  // call for overloaded methods.
   if (overloaded) {
     emit_overloaded_defgeneric_and_defun(n,
 					 sym_name2,
@@ -947,16 +1293,36 @@ void CFFI::emit_defmethod(Node *n) {
 					 defcfun_call,
 					 args_call,
 					 args_names,
-					 sym_name_preswig);
+					 sym_name_preswig,
+					 args_ctor);
       return;
   }
 
   // INVAR: n is not an overloaded C++ method.
 
+#if 0
+  if (Getattr(n,"cffi:staticmemberfunctionHandler")) {
+    return; // don't do it twice.
+  }
+#endif
+
+  // didn't end up calling get_final_method_name, since what we needed here (for static and non-overloaded methods) was so different.
+  //
+  // fill in renamed, renamed_class_method, class_dot_method
+  // get_final_method_name(n, renamed_and_unscoped_method_name, renamed_class_name, class_dot_method); 
 
   String* renamed_and_unscoped_method_name = Getattr(n,"memberfunctionHandler:sym:name");
-  String* renamed_class_name               = Getattr(Getattr(n,"parentNode"),"classDeclaration:name");
+  if (0==renamed_and_unscoped_method_name) {
+     renamed_and_unscoped_method_name = Getattr(n,"staticmemberfunctionHandler:sym:name");
+     if (0==renamed_and_unscoped_method_name) {     
+       renamed_and_unscoped_method_name = Getattr(n,"sym:name");
+     }
+  }
+
+  String* parent                           = Getattr(n,"parentNode");   // ,"constructorDeclaration:sym:name"); // classDeclaration:name");
+  String* renamed_class_name               = Getattr(parent,"sym:name"); // classDeclaration:name");
   String* class_dot_method = NewStringf("%s.%s", renamed_class_name, renamed_and_unscoped_method_name);
+
 
   /* make it easy to figure out which methods are being called, and avoid conflicts between C++ over-ridden methods */
   Printf(f_clos, "(cl:defmethod %s (%s)\n  (%s%s))\n\n",
@@ -965,9 +1331,220 @@ void CFFI::emit_defmethod(Node *n) {
 	 defcfun_call,
 	 args_call);
 
-  Setattr(n, "cffi:memberfunction", "1"); // what is the point of this--do we need to do it in emit_overloaded_defgeneric_and_defun as well?
+  Printf(f_clos, "(cl:export '%s)\n\n",
+	 class_dot_method);
+  
+  DV({ Printf(stdout, "(cl:defmethod %s (%s)\n  (%s%s))\n\n",
+	      class_dot_method,
+	      args_placeholder,
+	      defcfun_call,
+	      args_call);
+    });
+
+  // attribute cffi:memberfunction tells CFFI::functionWrapper to do emit_defmethod(n), so that
+  // another callback happens.  
+  // It is also set by CFFI::memberfunctionHandler().
+  //
+  Setattr(n, "cffi:memberfunction", "1");
 
 } // end emit_defmethod
+
+// helpers for emit_overloaded_initialize_instance()
+set<string> make_union_argnames(ArityVector& defgen_av) {
+  set<string> ret;
+  DV(printf("size of defgen_av is %d\n", (int)defgen_av.size()));
+  for (ArityVectorIt vit = defgen_av.begin(); vit != defgen_av.end(); ++vit) {      
+    list<string>& an = vit->argnames;
+    DV(printf("size of an is %d\n", (int)an.size()));
+    for (list<string>::const_iterator it = an.begin(); it != an.end(); ++it)
+      {
+	ret.insert(*it);
+      }
+  }
+  return ret;
+}
+
+set<string> generate_forbid_parms(const set<string>& all_args, 
+			   const set<string>& method_args, 
+			   string& required_parms, 
+			   string& forbid_parms,
+			   string& all_parms_string
+			   ) {
+
+  set<string> forbid_parm_set;
+
+  std::set_difference(all_args.begin(), all_args.end(), method_args.begin(), method_args.end(),
+		      std::inserter(forbid_parm_set, forbid_parm_set.end()));
+
+  int nreq  = method_args.size();
+  int nforb = forbid_parm_set.size();
+
+  std::ostringstream r, f, a;
+  csit tmp;
+  for(csit it = forbid_parm_set.begin(); it != forbid_parm_set.end(); ++it) {
+    f << *it;
+    tmp = it;
+    ++tmp;
+    if (tmp != forbid_parm_set.end()) {
+      f << " ";
+    }
+  }
+
+  for(csit it = method_args.begin(); it != method_args.end(); ++it) {
+    r << *it;
+    tmp = it;
+    ++tmp;
+    if (tmp != method_args.end()) {
+      r << " ";
+    }
+  }
+
+  if (nreq) {
+    a << r.str();
+  }
+  if (nforb) {
+    a << " " << f.str();
+  }
+
+  // results
+  required_parms = r.str();
+  forbid_parms   = f.str();    
+  all_parms_string = a.str();
+
+  DV(printf("required_parms   = '%s'\n", required_parms.c_str()));
+  DV(printf("forbid_parms     = '%s'\n", forbid_parms.c_str()));
+  DV(printf("all_parms_string = '%s'\n", all_parms_string.c_str()));
+
+  return forbid_parm_set;
+}
+
+
+
+// specialized to handle overloaded constructors.
+//
+bool CFFI::emit_overloaded_initialize_instance(Node* n) {
+
+    String* renamed            = 0;
+    String* renamed_class_name = 0;
+    String* class_dot_method   = 0;
+
+    arme.clear();
+    o2vs_it vit;
+
+    arity_vecset* av = retreive_av(n,
+				   renamed,
+				   renamed_class_name,
+				   class_dot_method,
+				   arme.is_ctor,
+				   arme.is_dtor,
+				   vit
+				   );
+    DV( {    
+	printf("\n\n n is, at level 1:\n");
+	Swig_print(n,1);
+	printf("\n\n  n is, at level 2:\n");
+	Swig_print(n,2);
+      });
+
+  ArityVector& defgen_av       = av->av; 
+  AritySet&    defgen_arityset = av->arityset;
+
+  int i = 0;
+
+  DV( {
+    
+    printf("\n\ndefgen_av has length: %d\n",(int)defgen_av.size());
+    for (ArityVectorIt rit = defgen_av.begin(); rit != defgen_av.end(); ++rit, ++i ) {
+      printf("   = = = = = = = =   elem  %d\n",i);
+      rit->dump();
+    }
+    
+    i = 0;
+    printf("\n\ndefgen_artiyset has length: %d\n",(int)defgen_arityset.size());
+    for (AritySetIt rit = defgen_arityset.begin(); rit != defgen_arityset.end(); ++rit, ++i ) {
+      printf("   = = = = = = = =   elem  %d\n",i);
+      rit->dump();
+    }
+    
+    printf("done with dump\n");
+    }); // end DV
+
+  set<string> union_all_params = make_union_argnames(defgen_av);
+
+  DV(printf("union_all_params is:\n"));
+  DV(for (csit it = union_all_params.begin(); it != union_all_params.end(); ++it) { printf("%s\n", it->c_str()); });
+
+  DV(printf("defgen_av.renamed_class_name = '%s'\n", Char(defgen_av[0].renamed_class_name)));
+
+  Printf(f_clos,
+		  "\n(cl:defmethod initialize-instance \n"
+		  "     :after ((obj %s) \n"
+		  "             &key \n",
+		  defgen_av[0].renamed_class_name);
+  
+  for (csit it = union_all_params.begin(); it != union_all_params.end(); ++it ) {
+    Printf(f_clos,
+		    "             (%s)\n",
+		    it->c_str()
+		    );
+    
+  }
+  Printf(f_clos,
+		  "             ) \n");
+
+  i=0;
+      
+  bool first = true;
+  for (ArityVectorIt kit = defgen_av.begin(); kit != defgen_av.end(); ++kit, ++i ) {    
+
+    arme = *kit;
+    list<string>& an = kit->argnames;
+
+    // get them sorted, for the set diff
+    set<string> required_arg_set;
+    for (list<string>::const_iterator it = an.begin(); it != an.end(); ++it) {
+      required_arg_set.insert(*it);
+    }
+
+	if (first) { // first stanza
+	  first = false; 
+	  Printf(f_clos,"    (cond ");
+	} else {
+	  Printf(f_clos,"          ");
+	} 
+
+	string required_parms;
+	string forbid_parms;
+	string all_parms_string;
+
+	// fill in require_parms and forbid_parms as a side effect of this call:
+	set<string> forbid_parm_set = 
+	  generate_forbid_parms(union_all_params, required_arg_set, required_parms, forbid_parms, all_parms_string);
+	  
+	// each  stanza:
+	Printf(f_clos,
+	       "((and            %s ;; <- %s*required*  keyword param\n"
+	       "           (and (not (or   %s ;; <- *forbidden* keyword param\n"
+	       "						))))\n"
+	       "	   (setf (slot-value obj 'ff-pointer)  (%s %s)))\n\n", 
+	       required_parms.c_str(),
+	       ((an.size()==0) ? "no arg ctor -- zero " : ""),
+	       forbid_parms.c_str(),
+	       arme.defcfun_call,
+	       arme.args_call
+	       );
+
+      
+  } // end kit over defgen_av
+
+  // last stanza
+    Printf(f_clos,
+	   "	  (t (error \"no C++ constructor for class '%s' matched your combination of keyword parameters\"))))\n\n", 
+	 defgen_av[0].renamed_class_name);
+
+  return true;
+
+} // end emit_overloaded_instance
 
 
 /* ----------------------------------------------------------------------
@@ -985,9 +1562,17 @@ int CFFI::staticmemberfunctionHandler(Node *n) {
   return Language::staticmemberfunctionHandler(n);
 }
 
+
+
+/* ----------------------------------------------------------------------
+ * CFFI::emit_initialize_instance()
+ * ---------------------------------------------------------------------- */
+
 void CFFI::emit_initialize_instance(Node *n) {
+
   String *args_placeholder = NewStringf("");
   String *args_call = NewStringf("");
+  String *args_ctor = NewStringf("");
 
   ParmList *pl = Getattr(n, "parms");
   int argnum = 0;
@@ -1021,7 +1606,7 @@ void CFFI::emit_initialize_instance(Node *n) {
       Delete(argname);
   }
 
-  // have to make a new string here, or else we'll mofiy "sym:name" permanantly during
+  // have to make a new string here, or else we'll modify "sym:name" permanantly during
   // the Replaceall -- definitely not what we want!
   String* sym_name2 = NewStringf("%s",Char(lispify_name(n, Getattr(n, "sym:name"), "'function")));
 
@@ -1030,8 +1615,48 @@ void CFFI::emit_initialize_instance(Node *n) {
   String* defcfun_call = lispify_name(n, Getattr(n, "sym:name"), "'function");
 
   String* renamed_and_unscoped_method_name = NewStringf("new"); // Getattr(n,"sym:name");
-  String* renamed_class_name               = Getattr(Getattr(n,"parentNode"),"classDeclaration:name");
+  String* renamed_class_name               = Getattr(n,"constructorDeclaration:sym:name"); // Getattr(Getattr(n,"parentNode"),"classDeclaration:name");
   String* class_dot_method = NewStringf("%s.%s", renamed_class_name, renamed_and_unscoped_method_name);
+
+
+  // get the additional arguments to  emit_overloaded_defgeneric_and_defun()
+  //String* sym_name2_bk = Copy(sym_name2);
+  sym_name2 = NewStringf("%s",Char(lispify_name(n, Getattr(n, "sym:name"), "'function")));
+  String* sym_name_preswig = NewStringf("%s",sym_name2);
+
+  //String* args_placeholder_bk = Copy(args_placeholder);
+  //String* args_call_bk = Copy(args_call);
+
+  String *args_names = NewStringf("");
+
+  get_arg_details(n, args_placeholder, args_names, args_call, args_ctor,static_argnames_list);
+
+
+  Node *overloaded = Getattr(n, "sym:overloaded");
+
+  // delegate overloaded constructors to emit_overloaded_defgeneric_and_defun();
+  //  in order to re-use all the overload handling machinery.
+  //  When we get a true (vs false bool) back, that's are signal that
+  //  we've seen all the overloaded versions of this function, and it's
+  //  time to call emit_overloaded_initialize_instance().
+  //
+  if (overloaded) {
+
+    if (emit_overloaded_defgeneric_and_defun(n,
+					 sym_name2,         //
+					 args_placeholder,  //
+					 defcfun_call,      // 
+					 args_call,         // 
+					 args_names,        // 
+					 sym_name_preswig,
+					     args_ctor))
+      { 
+	emit_overloaded_initialize_instance(n);
+      }
+    
+    return;
+  }
+
 
   /* make it easy to figure out which methods are being called, and avoid conflicts between C++ over-ridden methods */
   Printf(f_clos, "(cl:defmethod %s (%s)\n  (%s%s))\n\n(cl:export '%s)\n\n",
@@ -1043,7 +1668,7 @@ void CFFI::emit_initialize_instance(Node *n) {
 	 );
 
 
-  Printf(f_clos, "(cl:defmethod initialize-instance :after ((obj %s) &key%s)\n  (setf (slot-value obj 'ff-pointer) (%s%s)))\n\n",
+  Printf(f_clos, "(cl:defmethod initialize-instance :after ((obj %s) &key %s)\n  (setf (slot-value obj 'ff-pointer) (%s%s)))\n\n",
          lispify_name(parent, lispy_name(Char(Getattr(parent, "sym:name"))), "'class"), args_placeholder,
          lispify_name(n, Getattr(n, "sym:name"), "'function"), args_call);
 
@@ -1129,9 +1754,9 @@ int CFFI::functionWrapper(Node *n) {
   Parm *p;
   int gencomma = 0;
 
-#ifdef CFFI_DEBUG
+DV( {
   Printf(stderr, "function  -  %s - %d\n", Getattr(n, "name"), num_arguments);
-#endif
+ } );
 
   for (i = 0, p = parms; i < num_arguments; i++) {
 
@@ -1147,9 +1772,9 @@ int CFFI::functionWrapper(Node *n) {
       Printf(name_and_parms, ", ");
     String *parm_decl = SwigType_str(c_parm_type, arg);
     Printf(name_and_parms, "%s", parm_decl);
-#ifdef CFFI_DEBUG
+DV( {
     Printf(stderr, "  param: %s\n", parm_decl);
-#endif
+ } );
     Delete(parm_decl);
     gencomma = 1;
 
@@ -1206,15 +1831,6 @@ int CFFI::functionWrapper(Node *n) {
     }
   } else
     emit_defun(n, iname);
-
-  //   if (!overloaded || !Getattr(n, "sym:nextSibling")) {
-  //     update_package_if_needed(n);
-  //     emit_buffered_defuns(n);
-  //     // this is the last overload.
-  //     if (overloaded) {
-  //       emit_dispatch_defun(n);
-  //     }
-  //   }
 
   Delete(wname);
   DelWrapper(f);
@@ -1424,11 +2040,14 @@ int CFFI::enumDeclaration(Node *n) {
 
   return SWIG_OK;
 }
+
+
+
 void CFFI::emit_class(Node *n) {
 
-#ifdef CFFI_WRAP_DEBUG
+DV( {
   Printf(stderr, "emit_class: ENTER... '%s'(%x)\n", Getattr(n, "sym:name"), n);
-#endif
+ });
 
   String *name = Getattr(n, "sym:name");
   String *lisp_name = lispify_name(n, lispy_name(Char(name)), "'classname");
@@ -1470,18 +2089,18 @@ void CFFI::emit_class(Node *n) {
   SwigType_add_reference(Getattr(pattern, "type"));
   Swig_typemap_register("lispclass", pattern, lisp_name, NULL, NULL);
 
-#ifdef CFFI_WRAP_DEBUG
+DV( {
   Printf(stderr, "  pattern %s  name %s .. ... %s .\n", pattern, lisp_name);
-#endif
+ } );
 
   Delete(pattern);
 
   // Walk children to generate type definition.
   String *slotdefs = NewString("   ");
 
-#ifdef CFFI_WRAP_DEBUG
+DV( {
   Printf(stderr, "  walking children...\n");
-#endif
+ } );
 
   Node *c;
   for (c = firstChild(n); c; c = nextSibling(c)) {
@@ -1504,9 +2123,9 @@ void CFFI::emit_class(Node *n) {
   // Printf(slotdefs, ";; ");
   //        String *ns = listify_namespace(Getattr(n, "cffi:package"));
   String *ns = NewString("");
-#ifdef CFFI_WRAP_DEBUG
+DV( {
   Printf(stderr, "slot name = '%s' ns = '%s' class-of '%s' and type = '%s'\n", cname, ns, name, childType);
-#endif
+ } );
   Printf(slotdefs, "(#.(swig-insert-id \"%s\" %s :type :slot :class \"%s\") %s)", cname, ns, name, childType);  //compose_foreign_type(childType)
   Delete(ns);
   if (access && Strcmp(access, "public"))
@@ -1534,17 +2153,17 @@ void CFFI::emit_class(Node *n) {
   //Swig_typemap_register("cout",pattern,lisp_name,NULL,NULL);
   //Delete(pattern);
 
-#ifdef CFFI_WRAP_DEBUG
+DV( {
   Printf(stderr, "emit_class: EXIT\n");
-#endif
+ } );
 }
 
 // Includes structs
 void CFFI::emit_struct_union(Node *n, bool un = false) {
-#ifdef CFFI_DEBUG
+DV( {
   Printf(stderr, "struct/union %s\n", Getattr(n, "name"));
   Printf(stderr, "struct/union %s\n and %s", Getattr(n, "kind"), Getattr(n, "sym:name"));
-#endif
+ } );
 
   String *name = Getattr(n, "sym:name");
   String *kind = Getattr(n, "kind");
@@ -1575,10 +2194,10 @@ void CFFI::emit_struct_union(Node *n, bool un = false) {
 
 
   for (Node *c = firstChild(n); c; c = nextSibling(c)) {
-#ifdef CFFI_DEBUG
+DV( {
     Printf(stderr, "struct/union %s\n", Getattr(c, "name"));
     Printf(stderr, "struct/union %s and %s \n", Getattr(c, "kind"), Getattr(c, "sym:name"));
-#endif
+ } );
 
     if (Strcmp(nodeType(c), "cdecl")) {
       //C declaration ignore
@@ -1877,34 +2496,6 @@ enum BE
 String *CFFI::lispy_name(char *name) {
     return NewString(name);
 }
-
-#if 0
-// Strongly depracated:
-// the orignal lispy_name(), here so that nobody thinks of reintroducing it: DON'T USE IT!! 
-// Doing cutesy name manging like this messes up
-// the differentiation between case sensitive objects. 
-//
-//less flexible as it does the conversion in C, the lispify name does the conversion in lisp
-String *CFFI::old_bad_lispy_name(char *name) {
-  bool helper = false;
-  String *new_name = NewString("");
-  for (unsigned int i = 0; i < strlen(name); i++) {
-    if (name[i] == '_' || name[i] == '-') {
-      Printf(new_name, "%c", '-');
-      helper = false;
-    } else if (name[i] >= 'A' && name[i] <= 'Z') {
-      if (helper)
-	Printf(new_name, "%c", '-');
-      Printf(new_name, "%c", ('a' + (name[i] - 'A')));
-      helper = false;
-    } else {
-      helper = true;
-      Printf(new_name, "%c", name[i]);
-    }
-  }
-  return new_name;
-}
-#endif
 
 extern "C" Language *swig_cffi(void) {
   return new CFFI();
