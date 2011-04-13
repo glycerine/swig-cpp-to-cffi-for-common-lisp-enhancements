@@ -15,7 +15,6 @@
 
 
 
-(:cd "~/dj/swig/Examples/cffi/simple")
 
 ;; make, if not already
 (run-program "make" '() :output t)
@@ -28,29 +27,30 @@
 (compile-file "example-clos.lisp")
 (load "example-clos.lx64fsl")
 
-
+(use-package :example)
 
 ;; ----- Object creation -----
 
 (format t "Creating some objects:")
-(setf circle (make-instance 'Circle 10))
+(setf circle (make-instance 'Circle :r 10d0))
 (format t "    Created circle")
-(setf square (make-instance 'Square 10))
+(setf square (make-instance 'Square :w 10d0))
 (format t "    Created square")
 
 ;; ----- Access a static member -----
 
-(format t "A total of %d shapes were created" (Shape_nshapes))
+(format t "A total of %d shapes were created" Shape_nshapes)
 
 ;; ----- Member data access -----
 
 ;; Set the location of the object
 
-(setf (slot-value circle 'x) 20)
-(setf (slot-value circle 'y) 30
 
-(setf (slot-value square 'x) -10)
-(setf (slot-value square 'y) 5)
+(setf (slot-value circle 'x) -10d0)
+(setf (slot-value circle 'y) 5d0)
+
+(setf (slot-value square 'x) -10d0)
+(setf (slot-value square 'y) 5d0)
 
 (format t "Here is their current position:")
 (format t "    Circle = (%f, %f)", circle$x,circle$y)
