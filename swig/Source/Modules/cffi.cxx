@@ -1063,17 +1063,42 @@ void CFFI::get_arg_details(Node* n, //in
       String *ffitype = Swig_typemap_lookup("lispclass", p, "", 0);
 
       int tempargname = 0;
-      if (argname) {
-	// lisp will choke on parameters named t or T. Rename them.
-	if (Strcmp(argname, "t") == 0 || Strcmp(argname, "T") == 0) {
-	  argname = NewStringf("t-arg%d", argnum);
-	  tempargname = 1;
-	}
 
-	Printf(args_ctor, " (%s) \n", argname);
-	argnames.push_back(Char(argname));
+      if (!argname) {
+	// when the header file doesn't include names for the arguments
+	// (as is allowed in declarations only) then we have to make up
+	// a name, like arg0, arg1, arg2, ...
+	argname = NewStringf("_arg%d", argnum);
+	tempargname = 1;
+      } 
+
+#if 0
+      else {
+	// rather than worry if we are conflicting with t, string, integer, or any
+	// other built in types, we now pre-pend an underscore _
+	// to all variable names
+	argname = NewStringf("_%s", argname);
       }
+#else
 
+      else if (strlen(Char(argname))==1 && (Strcmp(argname, "t") == 0 || Strcmp(argname, "T") == 0)) {
+	// lisp will choke on parameters named t or T. Rename them.
+	argname = NewStringf("t-arg%d", argnum);
+	tempargname = 1;
+      } else if (Strcmp(argname, "string") == 0) {
+	// in lisp, string is a type
+	argname = NewStringf("string-arg%d", argnum);
+	tempargname = 1;
+      } else if (Strcmp(argname, "integer") == 0) {
+	// in lisp, integer is a type
+	argname = NewStringf("integer-arg%d", argnum);
+	tempargname = 1;
+      }
+#endif 
+
+      Printf(args_ctor, " (%s) \n", argname);
+      argnames.push_back(Char(argname));
+      
       DV( {
       printf("debug parms...here is p:\n");
       Swig_print(p);
@@ -1100,13 +1125,6 @@ void CFFI::get_arg_details(Node* n, //in
       DV( {printf("args_names:\n");
 	  Swig_print(args_names); });
 
-      if (!argname) {
-	argname = NewStringf("arg%d", argnum);
-	tempargname = 1;
-      } else if (Strcmp(argname, "t") == 0 || Strcmp(argname, "T") == 0) {
-	argname = NewStringf("t-arg%d", argnum);
-	tempargname = 1;
-      }
       if (Len(ffitype) > 0) {
 	Printf(args_placeholder, "(%s %s)", argname, ffitype);
 	Printf(args_names, " %s", argname);
@@ -1669,7 +1687,7 @@ void CFFI::emit_initialize_instance(Node *n) {
 
 
   Printf(f_clos, "(cl:defmethod initialize-instance :after ((obj %s) &key %s)\n  (setf (slot-value obj 'ff-pointer) (%s%s)))\n\n",
-         lispify_name(parent, lispy_name(Char(Getattr(parent, "sym:name"))), "'class"), args_placeholder,
+         lispify_name(parent, lispy_name(Char(Getattr(parent, "sym:name"))), "'class"), args_call, // not: args_placeholder,
          lispify_name(n, Getattr(n, "sym:name"), "'function"), args_call);
 
 }
@@ -2072,11 +2090,13 @@ DV( {
   }
 
   Printf(supers, ")");
-  Printf(f_clos, "\n(cl:defclass %s %s", lisp_name, supers);
-  Printf(f_clos, "\n  ((ff-pointer :reader ff-pointer)))\n\n");
-
-  Printf(f_clos, "(cl:export '%s)\n\n",lisp_name);
-
+  // put all class definitions+exports on one line to simplify pulling
+  // them to the front of the file (to get compilation wo/ warnings).
+  //  Printf(f_clos, "\n(cl:defclass %s %s", lisp_name, supers);
+  //  Printf(f_clos, "\n  ((ff-pointer :reader ff-pointer)))\n\n");
+  //  Printf(f_clos, "(cl:export '%s)\n\n",lisp_name);
+  
+  Printf(f_clos, "\n(cl:defclass %s %s    ((ff-pointer :reader ff-pointer)))  (cl:export '%s)\n\n", lisp_name, supers, lisp_name);
 
   Parm *pattern = NewParm(Getattr(n, "name"), NULL, n);
 
