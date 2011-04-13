@@ -12,8 +12,6 @@
 
 
 
-(:cd "~/dj/swig/Examples/cffi/simple")
-
 ;; make, if not already
 (run-program "make" '() :output t)
 
@@ -22,6 +20,7 @@
 (compile-file "example.lisp")
 (load "example.lx64fsl")
 
+(use-package :example)
 
 (defparameter tests-passed
 
@@ -31,7 +30,7 @@
 
 (defparameter x 42)
 (defparameter y 105)
-(defparameter g (gcd x y))
+(defparameter g (custom_gcd x y))
 
 
 (format t "The gcd of ~A and ~A is ~A ~%" x y g)
@@ -42,7 +41,7 @@
 (format t "Before manipulating Foo, it is: ~A ~%" Foo)
 
 ; Change its value
-(setf Foo 3.1415926)
+(setf Foo 3.1415926d0)
 
 ; See if the change took effect
 (format t "After manipulating Foo, it is: ~A ~%" Foo)
