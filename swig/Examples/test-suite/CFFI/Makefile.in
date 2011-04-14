@@ -2,12 +2,12 @@
 # Makefile for cffi test-suite
 #######################################################################
 
-LANGUAGE     = cffi
-CFFI         = cffi
+LANGUAGE     = CFFI
+CFFI         = ccl
 SCRIPTSUFFIX = _runme.lisp
-srcdir       = .
-top_srcdir   = ../../..
-top_builddir = ../../..
+srcdir       = @srcdir@
+top_srcdir   = @top_srcdir@
+top_builddir = @top_builddir@
 
 include $(srcdir)/../common.mk
 
@@ -34,10 +34,10 @@ include $(srcdir)/../common.mk
 	$(run_testcase)
 
 # Runs the testcase. A testcase is only run if
-# a file is found which has _runme.lisp appended after the testcase name.
+# a file is found which has _runme.scm appended after the testcase name.
 run_testcase = \
 	if [ -f $(srcdir)/$(SCRIPTPREFIX)$*$(SCRIPTSUFFIX) ]; then \
-	  env LD_LIBRARY_PATH=.:$$LD_LIBRARY_PATH $(RUNTOOL) $(CFFI) -r $(srcdir)/$(SCRIPTPREFIX)$*$(SCRIPTSUFFIX); \
+	  env LD_LIBRARY_PATH=.:$$LD_LIBRARY_PATH $(RUNTOOL) $(CFFI) -Q --eval="\'(progn (:cd $(srcdir)) (load $(srcdir)/$(SCRIPTPREFIX)$*$(SCRIPTSUFFIX))" ; \
 	fi
 
 # Clean
