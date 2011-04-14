@@ -1976,6 +1976,30 @@ fi
 
 AC_SUBST(CLISPBIN)
 
+
+#----------------------------------------------------------------
+# Look for Clozure Common Lisp (CCL)
+#----------------------------------------------------------------
+
+CCLBIN=
+
+AC_ARG_WITH(clisp, AS_HELP_STRING([--without-ccl], [Disable CCL])
+AS_HELP_STRING([--with-ccl=path], [Set location of Clozure Common Lisp executable (ccl)]),[ CCLBIN="$withval"], [CCLBIN=yes])
+
+# First, check for "--without-ccl" or "--with-ccl=no".
+if test x"${CCLBIN}" = xno -o x"${with_alllang}" = xno ; then 
+AC_MSG_NOTICE([Disabling CCL])
+CCLBIN=
+else
+
+# can we find ccl?
+if test "x$CCLBIN" = xyes; then
+   AC_PATH_PROG(CCLBIN, ccl)
+fi
+fi
+
+AC_SUBST(CCLBIN)
+
 #----------------------------------------------------------------
 # Look for GNU R
 #----------------------------------------------------------------
@@ -2254,6 +2278,12 @@ if test -z "$CLISPBIN" ; then
     SKIP_CLISP="1"
 fi
 AC_SUBST(SKIP_CLISP)
+
+SKIP_CCL=
+if test -z "$CCLBIN" ; then
+    SKIP_CCL="1"
+fi
+AC_SUBST(SKIP_CCL)
 
 SKIP_R=
 if test -z "$RBIN" ; then
