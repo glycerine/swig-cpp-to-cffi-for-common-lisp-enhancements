@@ -1996,7 +1996,6 @@ else
 if test "x$CFFILISPBIN" = xyes; th5Aen
    AC_PATH_PROG(CFFILISPBIN, ccl)
 fi
-fi
 
 AC_SUBST(CFFILISPBIN)
 
