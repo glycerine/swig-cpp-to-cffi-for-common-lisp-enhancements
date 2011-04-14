@@ -1993,9 +1993,10 @@ CFFILISPBIN=
 else
 
 # can we find ccl as a default?
-if test "x$CFFILISPBIN" = xyes; th5Aen
+if test "x$CFFILISPBIN" = xyes; then
    AC_PATH_PROG(CFFILISPBIN, ccl)
 fi
+
 
 AC_SUBST(CFFILISPBIN)
 
