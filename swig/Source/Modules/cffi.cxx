@@ -73,6 +73,7 @@ using std::list;
 using std::set;
 using std::string;
 
+
 // static copy to work with, rather than temps.
 list<string> static_argnames_list;
 
@@ -214,6 +215,10 @@ CFFI Options (available with -cffi)\n\
 
 class CFFI:public Language {
 public:
+  CFFI() {
+    already_emitted_pkg_setf_macro = false;
+  }
+
   String *f_cl;
   String *f_clhead;
   String *f_clwrap;
@@ -239,6 +244,7 @@ public:
   virtual int destructorHandler(Node *n);
   virtual int memberfunctionHandler(Node *n);
   virtual int membervariableHandler(Node *n);
+  virtual int staticmembervariableHandler(Node *n);
   virtual int classHandler(Node *n);
   virtual int staticmemberfunctionHandler(Node *n);
 
@@ -295,6 +301,7 @@ private:
   int structs_as_classes_flag; 
   int omit_readmacro_on_constants_flag; 
   bool no_swig_lisp;
+  bool already_emitted_pkg_setf_macro;
 };
 
 bool CFFI::cffi_clos_preamble_emitted = false;
@@ -1022,11 +1029,6 @@ bool CFFI::emit_overloaded_defgeneric_and_defun(Node *n,
   
   Printf(f_clos,"(cl:export '%s)\n\n",arme.class_dot_method);
 
-  // jea debug : breakpoint to analyze static methods missing name!!
-  if (0==Strcmp("FileName.compare",arme.class_dot_method)) {
-    printf("set breakpoint here for FileName.absolute issue!\n");
-  }
-
   // cleanup now that we are done with this class.
   o2vs.erase(vit);
 
@@ -1214,6 +1216,9 @@ void CFFI::emit_defmethod(Node *n) {
       Swig_print(n,enDV);
       printf("============================= end emit_defmethod dump ================\n");
     });
+
+  // turn on %feature("export") by default for defmethods.
+  SetInt(n, "feature:export",1);
 
   // identify the type of the method -- static or not.
   //   and is the first or 2nd time through.
@@ -1719,11 +1724,22 @@ int CFFI::memberfunctionHandler(Node *n) {
   return Language::memberfunctionHandler(n);
 }
 
+
 int CFFI::membervariableHandler(Node *n) {
   // Let SWIG generate a get/set function pair.
   Setattr(n, "cffi:membervariable", "1");
   return Language::membervariableHandler(n);
 }
+
+
+int CFFI::staticmembervariableHandler(Node *n) {
+  // Let SWIG generate a get/set function pair.
+  Setattr(n, "cffi:staticmembervariable", "1");
+  int lan = Language::staticmembervariableHandler(n);
+  Delattr(n, "cffi:staticmembervariable");
+  return lan;
+}
+
 
 int CFFI::functionWrapper(Node *n) {
 
@@ -1911,7 +1927,11 @@ void CFFI::emit_defun(Node *n, String *name) {
       tempargname = 1;
     }
 
-    Printf(f_cl, "\n  (%s %s)", argname, ffitype);
+    if (Getattr(n, "cffi:staticmembervariable")) {
+      Printf(f_cl, "\n  (%s %s)", Getattr(n,"variableWrapper:sym:name"), ffitype);
+    } else  {
+      Printf(f_cl, "\n  (%s %s)", argname, ffitype);
+    }
 
     Delete(ffitype);
 
@@ -1940,25 +1960,59 @@ int CFFI::constantWrapper(Node *n) {
 }
 
 int CFFI::variableWrapper(Node *n) {
+
+  // can we call this for static members as well?
+  // or do we want or need to create settings/gettings for that var? see ~/dj/avar test.
+ // original stuff:
+
   //  String *storage=Getattr(n,"storage");
   //  Printf(stdout,"\"%s\" %s)\n",storage,Getattr(n, "sym:name"));
 
   //  if(!storage || (Strcmp(storage,"extern") && Strcmp(storage,"externc")))
   //    return SWIG_OK;
 
+  bool is_static_member_var = (0 != Getattr(n,"staticmembervariableHandler:name"));
+
   String *var_name = Getattr(n, "sym:name");
   String *lisp_type = Swig_typemap_lookup("cin", n, "", 0);
-  String *lisp_name = lispify_name(n, var_name, "'variable");
+  //  String *lisp_name = lispify_name(n, var_name, "'variable");
+  String *lisp_name = Copy(var_name); 
 
-  if (Strcmp(lisp_name, "t") == 0 || Strcmp(lisp_name, "T") == 0)
-    lisp_name = NewStringf("t_var");
+  if (is_static_member_var) {
+    Language::variableWrapper(n); // Force the emission of the _set and _get function wrappers.
 
-  Printf(f_cl, "\n(cffi:defcvar (\"%s\" %s)\n %s)\n", var_name, lisp_name, lisp_type);
+    //    Printf(f_clos, "\n;; this is wrong, but it gives us var_name, lisp_name, and lisp_type: (cffi:defcvar (\"%s\" %s)\n %s)\n", var_name, lisp_name, lisp_type);
 
-  Delete(lisp_type);
+    return SWIG_OK;
+  } else {
 
-  emit_export(n, lisp_name);
+    if (Strcmp(lisp_name, "t") == 0 || Strcmp(lisp_name, "T") == 0)
+      lisp_name = NewStringf("t_var");
+
+    // make sure we have a module name
+    if (strlen(Char(module)) > 0) {
+
+      // provide convenience macro for setting .so package provided "global" variables.
+      if (!already_emitted_pkg_setf_macro) {
+	already_emitted_pkg_setf_macro = true;
+	Printf(f_cl,  "\n(defmacro %s.setf (pkgvar vtype  newvalue) `(cl:setf (cffi:mem-ref (cffi:get-var-pointer ',pkgvar) ,vtype) ,newvalue))  (cl:export '%s.setf) ; used to setf globals in the :%s library", module,module,module);
+      }
+      
+    } else {
+      assert(strlen(Char(module)) > 0); // module name cannot be zero length!
+    }
+
+    Printf(f_cl, "\n(cffi:defcvar (\"%s\" %s  :read-only nil :library :%s)  %s)\n", var_name, lisp_name, module, lisp_type);
+
+    Delete(lisp_type);
+
+    emit_export(n, lisp_name);
+  }
+
   return SWIG_OK;
+
+  // ported from python.cxx?
+
 }
 
 int CFFI::typedefHandler(Node *n) {
@@ -2066,6 +2120,9 @@ void CFFI::emit_class(Node *n) {
 DV( {
   Printf(stderr, "emit_class: ENTER... '%s'(%x)\n", Getattr(n, "sym:name"), n);
  });
+
+  // turn on %feature("export") by default for classes.
+  SetInt(n, "feature:export",1);
 
   String *name = Getattr(n, "sym:name");
   String *lisp_name = lispify_name(n, lispy_name(Char(name)), "'classname");
@@ -2520,3 +2577,5 @@ String *CFFI::lispy_name(char *name) {
 extern "C" Language *swig_cffi(void) {
   return new CFFI();
 }
+
+
