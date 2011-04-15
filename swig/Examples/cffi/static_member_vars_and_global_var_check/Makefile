@@ -1,7 +1,6 @@
 all: avar
 
 avar:
-	cd ~/dj/swig; ./remake
 	swig -cffi -c++  avar.i
 	g++ -c avar_wrap.cxx -fpic -o avar_wrap.o
 	g++ -c avar.cpp      -fpic -o avar.o
