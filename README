@@ -4,7 +4,8 @@ Status of the new CFFI module for Swig:
 
 The CFFI module, when provided with an appropriate .i swig interface file, now generates a combination of
 lisp and C code which cleanly wraps a large codebase of C and C++ code.  However there are surely still
-quite a few limitations and C++ constructs that are not handled.  Templates for example, have yet to been tested.
+quite a few limitations and C++ constructs that are not handled.  Templates for example, have not been
+well tested.
 
 Nonetheless, the CFFI module can largely automate the process of wrapping and generating a C++ shared library 
 such that it can be accessed from lisp.  
