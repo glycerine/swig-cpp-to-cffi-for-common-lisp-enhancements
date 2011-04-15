@@ -1,3 +1,42 @@
+14 April 2011
+Status of the new CFFI module for Swig:
+
+The CFFI module, when provided with an appropriate .i swig interface file, now generates a combination of
+lisp and C code which can largely automate the process of loading a C++ shared library .so into lisp,
+creating new C++ objects, and calling constructors, destructors, methods, static methods, and overloaded
+methods via the generated CLOS interface code.
+
+Tests/examples of usage:
+
+There are 5 tests in subdirectories of the swig/Examples/cffi directory.  These are traditional "make; make test;" tests.
+They are not yet integrated into the SWIG testing system, because I haven't yet figured out how to do that.
+
+For example, the swig/Examples/cffi/overctor directory contains my test for overloaded constructors. In this
+directory 
+
+me@home:~/swig-cpp-to-cffi-for-common-lisp-enhancements/swig/Examples/cffi/overctor$ ls -1 *
+
+Makefile
+overctor.cpp  -- source file, implementation stubs here print a report of which function was called.
+overctor.h    -- header file, declares a class with five constructors, two with the same arity.
+overctor.i    -- the swig interface or control file, this is what you feed swig on the command line.
+overctor_test.cl  -- the lisp test code that is called by "make test".
+
+
+System requirements:
+
+Developed and tested only on Clozure Common Lisp (invoked as: ccl). The Makefiles have 'ccl' hardcoded into them. You'll need to change that
+if you want to try this module on a different lisp system.
+
+CFFI - you'll need to have CFFI installed already. If you have quicklisp installed, then (ql:quickload "cffi") should do the trick.
+If you don't have quicklisp installed, I recommend it.  It will grab any package dependencies and install them for you too.
+
+
+Earlier notes:
+
+March 2011:
+Start of Project:
+
 I'm forking the swig code to do some enhancements to the C++ to CFFI bindings for common lisp.
 
 The only file that differs from SWIG svn 12570 is Source/Modules/cffi.cxx.
