@@ -1,10 +1,23 @@
 14 April 2011
+
 Status of the new CFFI module for Swig:
 
 The CFFI module, when provided with an appropriate .i swig interface file, now generates a combination of
-lisp and C code which can largely automate the process of loading a C++ shared library .so into lisp,
-creating new C++ objects, and calling constructors, destructors, methods, static methods, and overloaded
-methods via the generated CLOS interface code.
+lisp and C code which cleanly wraps a large codebase of C and C++ code.  However there are surely still
+quite a few limitations and C++ constructs that are not handled.  Templates for example, have yet to been tested.
+
+Nonetheless, the CFFI module can largely automate the process of wrapping and generating a C++ shared library 
+such that it can be accessed from lisp.  
+
+From lisp, via the proxy methods and CLOS objects, one can create new C++ objects, call constructors, 
+destructors, methods, static methods, and invoke overloaded methods. Using the CLOS calls cl:defclass and cl:defmethod,
+small wrapper functions are created, and a synthesized dispatcher that allows natural calling of overloaded 
+constructors by keyword specification is provided. 
+
+Thanks go to Daniel Herring, Ron Garret, Gary Byers, and others on the openmcl-devel list for helping me 
+figure out how to construct these dispatch functions and in general use ccl effectively. It is an excellent
+system.
+
 
 Tests/examples of usage:
 
@@ -32,9 +45,12 @@ CFFI - you'll need to have CFFI installed already. If you have quicklisp install
 If you don't have quicklisp installed, I recommend it.  It will grab any package dependencies and install them for you too.
 
 
+ * * * * * * * * *
+
+
 Earlier notes:
 
-March 2011:
+April 1, 2011.
 Start of Project:
 
 I'm forking the swig code to do some enhancements to the C++ to CFFI bindings for common lisp.
@@ -61,3 +77,25 @@ Schedule: normal
 Last Changed Author: wsfulton
 Last Changed Rev: 12570
 Last Changed Date: 2011-03-29 18:01:55 -0500 (Tue, 29 Mar 2011)
+
+
+  * * * * * * * * * *
+
+The email that initiated this project, from one of the SWIG maintainers. I
+offered them a small fix for CFFI, and Mr. Fulton pointed out that more love
+was needed.
+
+from  William S Fulton <wsf@fultondesigns.co.uk>
+to  "Jason E. Aten" <j.e.aten@gmail.com>
+cc  swig-devel@lists.sourceforge.net
+date	Fri, Apr 1, 2011 at 2:42 PM
+subject	Re: [Swig-devel] feature addition for the CFFI module: -structs-as-classes
+	
+Hi Jason
+
+The cffi module hasn't been worked on for 4 years and I don't believe it was ever very good. It is one of the modules where the test-suite doesn't really work as far as I know so I won't put in any special effort to maintain it. If you'd like the patches included, I would first of all suggest you remove the -structs-as-classes option and make it the default because this module is in a half developed state, I don't think much attention should be paid to backwards compatibility. Classes and structs should be handled identically, so you're correcting something that should have been put in the first place.
+
+As SWIG has no runtime example anywherer for cffi, yours would be the first. This module is badly in need of runtime tests and the minimum required is a copy of the 'simple' and 'class' examples, so I suggest you turn your example into the 'simple' example. I don't really like to have different examples for each language module, unless testing a specific language module feature. There isn't a single runtime test and I don't accept many patches without a runtime test these days, so you'd need to add one in. The test-suite is documented quite well here: http://www.swig.org/Doc2.0/Extending.html#Extending_test_suite , but if you have any questions please ask. The top level Makefile is currently missing cffi test-suite and example support too, so that needs adding in too unfortunately.
+
+William
+
