@@ -86,8 +86,8 @@ The email that initiated this project, from one of the SWIG maintainers. I
 offered them a small fix for CFFI, and Mr. Fulton pointed out that more love
 was needed.
 
-from  William S Fulton <wsf@fultondesigns.co.uk>
-to  "Jason E. Aten" <j.e.aten@gmail.com>
+from  William S Fulton 
+to  "Jason E. Aten"
 cc  swig-devel@lists.sourceforge.net
 date	Fri, Apr 1, 2011 at 2:42 PM
 subject	Re: [Swig-devel] feature addition for the CFFI module: -structs-as-classes
